@@ -42,6 +42,12 @@ class Organization(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    tier: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="free"
+    )  # free | pro | enterprise
+    plan_metadata: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict
+    )  # CSE name, slack channel, custom SLA terms, etc.
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
     api_keys: Mapped[list[ApiKey]] = relationship("ApiKey", back_populates="organization")
