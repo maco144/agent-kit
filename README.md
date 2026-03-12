@@ -230,4 +230,4 @@ pip install agent-kit[all]
 
 ## License
 
-MIT
+[FSL-1.1-Apache-2.0](https://fsl.software). Source-available for use in non-competing products. Converts to Apache 2.0 two years after each release.

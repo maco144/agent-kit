@@ -1,0 +1,80 @@
+{
+  "project": "agent-kit",
+  "version": "0.2.0",
+  "generated": "2026-03-12",
+  "description": "Production-ready framework for building AI agents. Type-safe. Observable. Circuit-broken.",
+  "license": "FSL-1.1-Apache-2.0",
+  "python_requires": ">=3.11",
+  "entry_points": {
+    "package": "agent_kit/__init__.py",
+    "examples": [
+      "examples/hello_agent.py",
+      "examples/multi_tool_agent.py",
+      "examples/pipeline_example.py"
+    ],
+    "tests": "pytest tests/"
+  },
+  "public_api": {
+    "agent_kit": ["Agent", "AgentConfig", "Tool", "tool", "AgentResult", "Message", "Turn", "ToolResult"],
+    "agent_kit.providers": ["AnthropicProvider", "BaseProvider", "ProviderConfig"],
+    "agent_kit.providers.openai": ["OpenAIProvider"],
+    "agent_kit.providers.ollama": ["OllamaProvider"],
+    "agent_kit.orchestrator": ["LinearPipeline", "DAGOrchestrator", "DAGResult", "TaskNode"],
+    "agent_kit.memory.sqlite": ["SQLiteMemory"],
+    "agent_kit.memory.in_memory": ["InMemoryStore"],
+    "agent_kit.observability": ["AgentTracer"],
+    "agent_kit.types": [
+      "Message", "ToolCall", "ToolResult", "ToolSchema", "Turn", "CostSummary",
+      "AgentResult", "PipelineResult", "RetryPolicyConfig", "BackoffConfig",
+      "CircuitBreakerConfig", "SpanEvent", "SpanKind", "AuditEventRecord"
+    ]
+  },
+  "modules": [
+    {"path": "agent_kit/agent/agent.py", "exports": ["Agent", "AgentConfig"], "purpose": "Primary user-facing agent primitive"},
+    {"path": "agent_kit/agent/loop.py", "exports": ["AgentLoop"], "purpose": "Turn execution engine (retry, circuit breaker, audit)"},
+    {"path": "agent_kit/types.py", "exports": "all Pydantic models", "purpose": "Foundation — no internal imports"},
+    {"path": "agent_kit/providers/anthropic.py", "exports": ["AnthropicProvider"], "purpose": "Anthropic LLM adapter"},
+    {"path": "agent_kit/providers/openai.py", "exports": ["OpenAIProvider"], "purpose": "OpenAI / compatible endpoint adapter"},
+    {"path": "agent_kit/providers/ollama.py", "exports": ["OllamaProvider"], "purpose": "Ollama local model adapter"},
+    {"path": "agent_kit/providers/base.py", "exports": ["BaseProvider", "ProviderConfig"], "purpose": "Abstract provider interface"},
+    {"path": "agent_kit/tools/base.py", "exports": ["Tool", "tool"], "purpose": "@tool decorator + Tool class"},
+    {"path": "agent_kit/tools/registry.py", "exports": ["ToolRegistry"], "purpose": "Tool allowlist enforcement"},
+    {"path": "agent_kit/orchestrator/pipeline.py", "exports": ["LinearPipeline"], "purpose": "Sequential multi-agent pipeline"},
+    {"path": "agent_kit/orchestrator/dag.py", "exports": ["DAGOrchestrator", "DAGResult", "TaskNode"], "purpose": "Parallel DAG execution"},
+    {"path": "agent_kit/memory/in_memory.py", "exports": ["InMemoryStore"], "purpose": "In-process windowed memory"},
+    {"path": "agent_kit/memory/sqlite.py", "exports": ["SQLiteMemory"], "purpose": "Persistent thread-safe SQLite memory"},
+    {"path": "agent_kit/reliability/circuit_breaker.py", "exports": ["CircuitBreaker"], "purpose": "3-state circuit breaker"},
+    {"path": "agent_kit/reliability/retry.py", "exports": ["RetryPolicy"], "purpose": "Exponential backoff retry"},
+    {"path": "agent_kit/audit/chain.py", "exports": ["AuditChain"], "purpose": "Merkle hash-linked audit log"},
+    {"path": "agent_kit/observability/tracer.py", "exports": ["AgentTracer"], "purpose": "noop/console/OTLP tracing"},
+    {"path": "agent_kit/exceptions.py", "exports": ["CircuitOpenError", "MaxTurnsExceededError", "ProviderError", "ToolNotAllowedError", "DAGCycleError", "DAGMissingDependencyError"], "purpose": "Custom exceptions"}
+  ],
+  "dependencies": {
+    "core": {"anthropic": ">=0.25", "pydantic": ">=2.5", "httpx": ">=0.27"},
+    "optional": {"openai": ">=1.30", "opentelemetry-api": ">=1.24", "opentelemetry-sdk": ">=1.24"},
+    "dev": {"pytest": ">=8", "pytest-asyncio": ">=0.23", "respx": ">=0.21", "ruff": ">=0.4", "mypy": ">=1.9"}
+  },
+  "tests": {
+    "count": 9,
+    "files": [
+      "tests/test_agent.py",
+      "tests/test_tools.py",
+      "tests/test_circuit_breaker.py",
+      "tests/test_audit.py",
+      "tests/test_retry.py",
+      "tests/test_pipeline.py",
+      "tests/test_dag.py",
+      "tests/test_sqlite_memory.py",
+      "tests/conftest.py"
+    ],
+    "config": {"asyncio_mode": "auto", "testpaths": ["tests"]}
+  },
+  "key_patterns": {
+    "tool_definition": "@tool(description='...', idempotent=True) async def fn(arg: type) -> dict",
+    "agent_run": "result = await agent.run(prompt)  # returns AgentResult",
+    "pipeline": "LinearPipeline([(agent, '{input}'), ...]).run(initial)",
+    "dag": "DAGOrchestrator([TaskNode(id, agent, template, depends_on=[...])]).execute(input)",
+    "persistent_memory": "SQLiteMemory('~/.agent-kit/my.db', window=100)",
+    "audit": "AgentConfig(audit_enabled=True) → result.audit_root_hash"
+  }
+}
