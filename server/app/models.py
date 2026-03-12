@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -126,6 +127,88 @@ class AuditEvent(Base):
         Index("ix_audit_events_run_id", "run_id"),
         Index("ix_audit_events_org_event_type", "org_id", "event_type"),
         Index("ix_audit_events_leaf_hash", "leaf_hash"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fleet Dashboard — metrics pipeline tables
+# ---------------------------------------------------------------------------
+
+
+class ActiveRunCache(Base):
+    """
+    In-progress runs. Populated on run_start, updated on turn_complete,
+    deleted on run_complete / run_error. TTL: rows older than 1 hour are
+    considered stale (abandoned runs) and excluded from /v1/metrics/active.
+    """
+    __tablename__ = "active_run_cache"
+
+    run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    org_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    project: Mapped[str] = mapped_column(String(255), nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    prompt_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    turns_so_far: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_so_far_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    __table_args__ = (
+        Index("ix_active_run_cache_org", "org_id"),
+    )
+
+
+class AgentMetricSnapshot(Base):
+    """
+    One-minute aggregation bucket per (org, project, agent_name, model).
+    Runs are accumulated via upsert on run_complete / run_error.
+    """
+    __tablename__ = "agent_metric_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    project: Mapped[str] = mapped_column(String(255), nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    bucket: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # truncated to minute
+    runs_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    runs_success: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    runs_error: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    total_turns: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "org_id", "project", "agent_name", "model", "bucket",
+            name="uq_metric_snapshot_key",
+        ),
+        Index("ix_metric_snapshots_org_bucket", "org_id", "bucket"),
+        Index("ix_metric_snapshots_org_agent_bucket", "org_id", "project", "agent_name", "bucket"),
+    )
+
+
+class CircuitBreakerEvent(Base):
+    """One record per circuit breaker state transition."""
+    __tablename__ = "circuit_breaker_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    project: Mapped[str] = mapped_column(String(255), nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    resource: Mapped[str] = mapped_column(String(128), nullable=False)
+    prev_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    new_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (
+        Index("ix_cb_events_org_agent_time", "org_id", "agent_name", "occurred_at"),
+        Index("ix_cb_events_org_state", "org_id", "new_state", "occurred_at"),
     )
 
 

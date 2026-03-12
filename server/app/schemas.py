@@ -87,3 +87,123 @@ class VerifyFailure(BaseModel):
     expected_leaf_hash: str
     stored_leaf_hash: str
     verified_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Fleet Dashboard — metrics
+# ---------------------------------------------------------------------------
+
+
+class MetricsWindow(BaseModel):
+    from_: datetime = Field(alias="from")
+    to: datetime
+
+    model_config = {"populate_by_name": True}
+
+
+class MetricsSummary(BaseModel):
+    window: dict[str, str]
+    total_runs: int
+    runs_success: int
+    runs_error: int
+    error_rate_pct: float
+    total_cost_usd: float
+    total_input_tokens: int
+    total_output_tokens: int
+    active_runs: int
+    agents_count: int
+    projects: list[str]
+
+
+class CostDataPoint(BaseModel):
+    bucket: datetime
+    cost_usd: float
+    input_tokens: int
+    output_tokens: int
+
+
+class CostSeries(BaseModel):
+    label: str
+    project: str
+    data: list[CostDataPoint]
+    total_cost_usd: float
+
+
+class CostResponse(BaseModel):
+    group_by: str
+    resolution: str
+    series: list[CostSeries]
+
+
+class RunsDataPoint(BaseModel):
+    bucket: datetime
+    runs_total: int
+    runs_success: int
+    runs_error: int
+    avg_turns: float
+    avg_duration_ms: int
+
+
+class RunsSeries(BaseModel):
+    label: str
+    data: list[RunsDataPoint]
+
+
+class RunsResponse(BaseModel):
+    resolution: str
+    series: list[RunsSeries]
+
+
+class AgentSummary(BaseModel):
+    agent_name: str
+    project: str
+    models_used: list[str]
+    runs_total: int
+    error_rate_pct: float
+    total_cost_usd: float
+    avg_cost_per_run_usd: float
+    avg_turns: float
+    circuit_breaker_state: str
+    last_seen: datetime | None
+
+
+class AgentsResponse(BaseModel):
+    agents: list[AgentSummary]
+
+
+class CBEventDetail(BaseModel):
+    prev_state: str
+    new_state: str
+    failure_count: int
+    occurred_at: datetime
+    duration_open_ms: int | None = None
+
+
+class CBAgentDetail(BaseModel):
+    agent_name: str
+    resource: str
+    current_state: str
+    events: list[CBEventDetail]
+
+
+class CircuitBreakerResponse(BaseModel):
+    agents: list[CBAgentDetail]
+
+
+class ActiveRunDetail(BaseModel):
+    run_id: str
+    agent_name: str
+    project: str
+    model: str
+    started_at: datetime
+    elapsed_ms: int
+    turns_so_far: int
+    cost_so_far_usd: float
+    tokens_so_far: int
+
+    model_config = {"from_attributes": True}
+
+
+class ActiveRunsResponse(BaseModel):
+    active_runs: list[ActiveRunDetail]
+    count: int
