@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-kit"
+version = "0.1.0"
+description = "Production-ready framework for building AI agents — type-safe, observable, circuit-broken."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+keywords = ["ai", "agents", "llm", "anthropic", "openai", "production"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "anthropic>=0.25",
+    "pydantic>=2.5",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+openai  = ["openai>=1.30"]
+ollama  = []        # uses httpx (already core); listed for discoverability
+otel    = ["opentelemetry-api>=1.24", "opentelemetry-sdk>=1.24"]
+all     = ["agent-kit[openai,ollama,otel]"]
+dev     = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "ruff>=0.4",
+    "mypy>=1.9",
+]
+
+[project.urls]
+Homepage   = "https://github.com/yourusername/agent-kit"
+Repository = "https://github.com/yourusername/agent-kit"
+Issues     = "https://github.com/yourusername/agent-kit/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent_kit"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
