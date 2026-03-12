@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from agent_kit.agent.loop import AgentLoop
 from agent_kit.audit.chain import AuditChain
@@ -17,6 +17,9 @@ from agent_kit.types import (
     Message,
     RetryPolicyConfig,
 )
+
+if TYPE_CHECKING:
+    from agent_kit.cloud.reporter import CloudReporter
 
 
 class AgentConfig:
@@ -39,6 +42,7 @@ class AgentConfig:
         audit_enabled: bool = True,
         tracer: AgentTracer | None = None,
         memory_window: int = 50,
+        cloud: CloudReporter | None = None,
     ) -> None:
         self.model = model
         self.system_prompt = system_prompt
@@ -50,6 +54,7 @@ class AgentConfig:
         self.audit_enabled = audit_enabled
         self.tracer = tracer
         self.memory_window = memory_window
+        self.cloud = cloud
 
 
 class Agent:
@@ -134,6 +139,7 @@ class Agent:
             max_tokens_per_turn=self._config.max_tokens_per_turn,
             retry_policy=self._config.retry_policy,
             circuit_breaker_config=self._config.circuit_breaker,
+            reporter=self._config.cloud,
         )
         return await loop.run(prompt, **context)
 
