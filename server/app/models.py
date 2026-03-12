@@ -213,6 +213,72 @@ class CircuitBreakerEvent(Base):
 
 
 # ---------------------------------------------------------------------------
+# Alerting
+# ---------------------------------------------------------------------------
+
+
+class AlertChannel(Base):
+    """A notification destination (Slack, PagerDuty, webhook, email)."""
+    __tablename__ = "alert_channels"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    type: Mapped[str] = mapped_column(String(32), nullable=False)   # email|slack|pagerduty|webhook
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+
+    __table_args__ = (
+        Index("ix_alert_channels_org", "org_id"),
+    )
+
+
+class AlertRule(Base):
+    """An alert rule: type + config + which channels to notify."""
+    __tablename__ = "alert_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    type: Mapped[str] = mapped_column(String(64), nullable=False)
+    # circuit_breaker_open | cost_anomaly | error_rate | audit_integrity_failure
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    channel_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    muted_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, onupdate=_now, nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_alert_rules_org_type", "org_id", "type", "enabled"),
+    )
+
+
+class AlertFiring(Base):
+    """One row per alert instance. Created on fire, updated on resolve/ack."""
+    __tablename__ = "alert_firings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    rule_id: Mapped[str] = mapped_column(String(36), ForeignKey("alert_rules.id"), nullable=False)
+    org_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="firing")
+    # firing | resolved | acked
+    fired_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_now)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    acked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    acked_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    notifications_sent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        Index("ix_alert_firings_rule_state", "rule_id", "state"),
+        Index("ix_alert_firings_org_state", "org_id", "state", "fired_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Raw event log (all event types, for dashboard / metrics pipeline)
 # ---------------------------------------------------------------------------
 
