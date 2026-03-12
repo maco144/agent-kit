@@ -7,13 +7,13 @@ name = "agent-kit"
 version = "0.2.0"
 description = "Production-ready framework for building AI agents — type-safe, observable, circuit-broken."
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "FSL-1.1-Apache-2.0" }
 requires-python = ">=3.11"
 keywords = ["ai", "agents", "llm", "anthropic", "openai", "production"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: Other/Proprietary License",  # FSL is not OSI-approved
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries",
