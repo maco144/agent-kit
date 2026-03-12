@@ -218,16 +218,47 @@ async def _handle_circuit_state_change(
     raw: dict, org_id: str, occurred_at: datetime, db: AsyncSession
 ) -> None:
     payload = raw.get("payload", {})
+    agent_name = raw.get("agent_name", "")
+    project = raw.get("project", "default")
+    resource = payload.get("resource", "")
+    new_state = payload.get("new_state", "")
+
     db.add(CircuitBreakerEvent(
         org_id=org_id,
-        project=raw.get("project", "default"),
-        agent_name=raw.get("agent_name", ""),
-        resource=payload.get("resource", ""),
+        project=project,
+        agent_name=agent_name,
+        resource=resource,
         prev_state=payload.get("prev_state", ""),
-        new_state=payload.get("new_state", ""),
+        new_state=new_state,
         failure_count=int(payload.get("failure_count") or 0),
         occurred_at=occurred_at,
     ))
+
+    # Trigger alert evaluation
+    try:
+        from app.alerting.evaluator import fire_circuit_breaker_open, resolve_circuit_breaker
+        if new_state == "open":
+            await fire_circuit_breaker_open(
+                org_id=org_id,
+                agent_name=agent_name,
+                project=project,
+                resource=resource,
+                failure_count=int(payload.get("failure_count") or 0),
+                occurred_at=occurred_at,
+                db=db,
+            )
+        elif new_state == "closed":
+            await resolve_circuit_breaker(
+                org_id=org_id,
+                agent_name=agent_name,
+                resource=resource,
+                db=db,
+            )
+    except Exception as exc:
+        import logging
+        logging.getLogger("agentkit.cloud.ingest").debug(
+            "Alert trigger failed for circuit_state_change: %s", exc
+        )
 
 
 async def _upsert_metric_snapshot(
@@ -391,6 +422,19 @@ async def _verify_run_background(run_id: str, org_id: str) -> None:
             if ok:
                 for event in events:
                     event.verified = True
+            else:
+                # Trigger audit_integrity_failure alert
+                try:
+                    from app.alerting.evaluator import fire_audit_integrity_failure
+                    await fire_audit_integrity_failure(
+                        org_id=org_id,
+                        agent_name=run.agent_name,
+                        project=run.project,
+                        run_id=run_id,
+                        db=db,
+                    )
+                except Exception:
+                    pass
 
             await db.commit()
     except Exception as exc:

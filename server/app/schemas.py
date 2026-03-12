@@ -207,3 +207,77 @@ class ActiveRunDetail(BaseModel):
 class ActiveRunsResponse(BaseModel):
     active_runs: list[ActiveRunDetail]
     count: int
+
+
+# ---------------------------------------------------------------------------
+# Alerting
+# ---------------------------------------------------------------------------
+
+
+class AlertChannelSchema(BaseModel):
+    id: str
+    name: str
+    type: str
+    config: dict[str, Any]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AlertRuleSchema(BaseModel):
+    id: str
+    name: str
+    type: str
+    config: dict[str, Any]
+    enabled: bool
+    channel_ids: list[str]
+    muted_until: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AlertFiringSchema(BaseModel):
+    id: str
+    rule_id: str
+    state: str
+    fired_at: datetime
+    resolved_at: datetime | None
+    acked_at: datetime | None
+    acked_by: str | None
+    context: dict[str, Any]
+    notifications_sent: int
+
+    model_config = {"from_attributes": True}
+
+
+class CreateChannelRequest(BaseModel):
+    name: str
+    type: str  # email | slack | pagerduty | webhook
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class CreateChannelResponse(BaseModel):
+    channel: AlertChannelSchema
+    test_sent: bool
+
+
+class CreateRuleRequest(BaseModel):
+    name: str
+    type: str
+    config: dict[str, Any] = Field(default_factory=dict)
+    channel_ids: list[str] = Field(default_factory=list)
+    enabled: bool = True
+
+
+class UpdateRuleRequest(BaseModel):
+    name: str | None = None
+    config: dict[str, Any] | None = None
+    enabled: bool | None = None
+    channel_ids: list[str] | None = None
+    muted_until: datetime | None = None
+
+
+class AckFiringRequest(BaseModel):
+    comment: str | None = None
