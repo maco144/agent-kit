@@ -281,3 +281,77 @@ class UpdateRuleRequest(BaseModel):
 
 class AckFiringRequest(BaseModel):
     comment: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Support context (sidebar widget)
+# ---------------------------------------------------------------------------
+
+
+class SLADefinition(BaseModel):
+    tier: str
+    p1_response_hours: int | None  # None = no SLA
+    p2_response_hours: int | None
+    p3_response_hours: int | None
+    p1_coverage: str   # "24/7" | "business_hours" | "none"
+    p2_coverage: str
+    p3_coverage: str
+    max_contacts: int | None  # None = unlimited
+
+
+class SupportMetricsSummary(BaseModel):
+    total_runs: int
+    runs_success: int
+    runs_error: int
+    error_rate_pct: float
+    total_cost_usd: float
+    total_input_tokens: int
+    total_output_tokens: int
+    active_runs: int
+    agents_seen: int
+
+
+class CBStatusSummary(BaseModel):
+    open_agents: list[str]       # agent names currently open
+    recent_events: list[dict]    # last N CB events
+
+
+class AlertStatusSummary(BaseModel):
+    firing_count: int
+    recent_firings: list[dict]
+
+
+class AuditStatusSummary(BaseModel):
+    total_runs: int
+    verified_runs: int
+    failed_runs: int
+    pending_runs: int
+
+
+class AgentStatusRow(BaseModel):
+    agent_name: str
+    project: str
+    runs_total: int
+    error_rate_pct: float
+    total_cost_usd: float
+    circuit_breaker_state: str
+    last_seen: datetime | None
+
+
+class SupportContext(BaseModel):
+    org_id: str
+    org_name: str
+    tier: str
+    sla: SLADefinition
+    period_hours: int
+    metrics: SupportMetricsSummary
+    circuit_breaker: CBStatusSummary
+    alerts: AlertStatusSummary
+    audit: AuditStatusSummary
+    agents: list[AgentStatusRow]
+    generated_at: datetime
+
+
+class UpdateTierRequest(BaseModel):
+    tier: str  # free | pro | enterprise
+    plan_metadata: dict[str, Any] = Field(default_factory=dict)
