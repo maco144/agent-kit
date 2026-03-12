@@ -18,7 +18,7 @@ from agent_kit.agent.agent import Agent, AgentConfig
 from agent_kit.tools.base import Tool, tool
 from agent_kit.types import AgentResult, Message, ToolResult, Turn
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "__version__",
