@@ -1,0 +1,155 @@
+"""SQLAlchemy ORM models for agent-kit Cloud."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import JSON
+
+from app.database import Base
+
+
+def _uuid() -> str:
+    return str(uuid.uuid4())
+
+
+def _now() -> datetime:
+    return datetime.utcnow()
+
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+
+    api_keys: Mapped[list[ApiKey]] = relationship("ApiKey", back_populates="organization")
+    audit_runs: Mapped[list[AuditRun]] = relationship("AuditRun", back_populates="organization")
+
+
+class ApiKey(Base):
+    """
+    Stores a SHA-256 hash of the API key (never the key itself).
+    The prefix (first 12 chars) is stored plaintext for identification.
+    """
+    __tablename__ = "api_keys"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    key_prefix: Mapped[str] = mapped_column(String(16), nullable=False)  # e.g. "akt_live_a3f9"
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    organization: Mapped[Organization] = relationship("Organization", back_populates="api_keys")
+
+    __table_args__ = (Index("ix_api_keys_key_hash", "key_hash"),)
+
+
+# ---------------------------------------------------------------------------
+# Audit Trail
+# ---------------------------------------------------------------------------
+
+
+class AuditRun(Base):
+    """One record per Agent.run() call that flushed audit events."""
+    __tablename__ = "audit_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    project: Mapped[str] = mapped_column(String(255), nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    genesis_root: Mapped[str] = mapped_column(String(64), nullable=False, default="0" * 64)
+    final_root_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    integrity: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending"
+    )  # verified | failed | pending
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+
+    organization: Mapped[Organization] = relationship("Organization", back_populates="audit_runs")
+    events: Mapped[list[AuditEvent]] = relationship(
+        "AuditEvent", back_populates="run", order_by="AuditEvent.seq"
+    )
+
+    __table_args__ = (
+        Index("ix_audit_runs_org_id", "org_id"),
+        Index("ix_audit_runs_org_run_id", "org_id", "run_id"),
+    )
+
+
+class AuditEvent(Base):
+    """One record per AuditEventRecord in the chain. Append-only."""
+    __tablename__ = "audit_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("audit_runs.run_id"), nullable=False)
+    org_id: Mapped[str] = mapped_column(String(36), nullable=False)  # denormalized
+    event_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    prev_root: Mapped[str] = mapped_column(String(64), nullable=False)
+    leaf_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    run: Mapped[AuditRun] = relationship("AuditRun", back_populates="events")
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "seq", name="uq_audit_events_run_seq"),
+        Index("ix_audit_events_run_id", "run_id"),
+        Index("ix_audit_events_org_event_type", "org_id", "event_type"),
+        Index("ix_audit_events_leaf_hash", "leaf_hash"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Raw event log (all event types, for dashboard / metrics pipeline)
+# ---------------------------------------------------------------------------
+
+
+class CloudEventLog(Base):
+    """Raw append-only log of every CloudEvent received from the SDK."""
+    __tablename__ = "cloud_event_log"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    event_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    org_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    project: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+
+    __table_args__ = (
+        Index("ix_cloud_event_log_org_run", "org_id", "run_id"),
+        Index("ix_cloud_event_log_org_type", "org_id", "event_type"),
+    )
