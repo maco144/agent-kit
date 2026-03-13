@@ -228,6 +228,57 @@ pip install agent-kit[all]
 
 ---
 
+## agent-kit Cloud
+
+Connect any agent to the **agent-kit Cloud** backend — a hosted service that gives you a fleet dashboard, audit trail storage, alerting, and SLA-backed support without running any infrastructure yourself.
+
+```python
+from agent_kit.cloud import CloudReporter
+
+reporter = CloudReporter(
+    api_key="akt_live_...",      # or set AGENTKIT_API_KEY env var
+    project="production",
+    agent_name="billing-assistant",
+)
+
+agent = Agent(
+    provider=AnthropicProvider(),
+    config=AgentConfig(cloud=reporter),
+)
+result = await agent.run("Process this invoice.")
+# Events are batched and shipped automatically — no await needed.
+```
+
+`CloudReporter` is **fire-and-forget**: network errors are logged at `DEBUG` level and never propagate to your agent. Performance is completely unaffected by cloud connectivity.
+
+### What gets reported
+
+| Event | When |
+|---|---|
+| `run_start` | Agent loop begins |
+| `turn_complete` | Each LLM response + tool calls |
+| `run_complete` | Successful finish (includes audit root hash) |
+| `run_error` | Unhandled exception |
+| `circuit_state_change` | CB opens / half-opens / closes |
+| `audit_flush` | Full Merkle chain (if `audit_enabled=True`) |
+
+### CloudReporter options
+
+```python
+CloudReporter(
+    api_key="akt_live_...",
+    project="production",
+    agent_name="billing-assistant",
+    flush_interval_s=5.0,    # how often to batch-send (default 5s)
+    max_queue_size=1000,     # drop events if queue exceeds this
+    include_output=False,    # never ships LLM output text to cloud
+)
+```
+
+See [`docs/cloud-quickstart.md`](docs/cloud-quickstart.md) to get started, or [`docs/self-hosting.md`](docs/self-hosting.md) to run the backend yourself.
+
+---
+
 ## License
 
 [FSL-1.1-Apache-2.0](https://fsl.software). Source-available for use in non-competing products. Converts to Apache 2.0 two years after each release.
