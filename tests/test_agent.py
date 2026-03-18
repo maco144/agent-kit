@@ -119,6 +119,46 @@ async def test_agent_max_turns_exceeded(mock_provider_factory):
 
 
 @pytest.mark.asyncio
+async def test_circuit_breaker_state_change_logged_to_audit():
+    """CB state transitions (CLOSED→OPEN) must appear in the audit chain."""
+    from agent_kit.types import CircuitBreakerConfig
+    from agent_kit.providers.base import ProviderConfig
+    from agent_kit.types import CostSummary, Message, Turn
+
+    class FailingProvider:
+        config = ProviderConfig(default_model="mock")
+        def name(self): return "failing"
+        async def complete(self, messages, **kw):
+            raise RuntimeError("provider down")
+        async def stream(self, *a, **kw):
+            yield ""
+
+    agent = Agent(
+        FailingProvider(),
+        config=AgentConfig(
+            audit_enabled=True,
+            circuit_breaker=CircuitBreakerConfig(
+                failure_threshold=1,
+                recovery_timeout_s=999,
+            ),
+            retry_policy=RetryPolicyConfig(max_attempts=1),
+        ),
+    )
+
+    with pytest.raises(Exception):
+        await agent.run("trigger failure")
+
+    assert agent.audit is not None
+    event_types = [e.event_type for e in agent.audit.events()]
+    assert "circuit_breaker_state_change" in event_types
+
+    cb_event = next(e for e in agent.audit.events() if e.event_type == "circuit_breaker_state_change")
+    assert cb_event.actor == "failing"
+    # Chain remains intact after the CB event
+    assert agent.audit.verify()
+
+
+@pytest.mark.asyncio
 async def test_agent_memory_persists_across_runs(mock_provider_factory):
     provider = mock_provider_factory(["First.", "Second."])
     from agent_kit.memory.in_memory import InMemoryStore

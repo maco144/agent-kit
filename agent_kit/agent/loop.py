@@ -279,25 +279,34 @@ class AgentLoop:
         try:
             result = await self._cb.call(fn, *args, **kwargs)
         except Exception:
-            if self._reporter:
-                new_state = self._cb.state
-                if prev_state != new_state:
-                    await self._reporter.on_circuit_state_change(
-                        run_id=run_id,
-                        resource=self._provider.name(),
-                        prev_state=prev_state.value,
-                        new_state=new_state.value,
-                        failure_count=self._cb.stats().failure_count,
-                    )
-            raise
-        if self._reporter:
             new_state = self._cb.state
             if prev_state != new_state:
-                await self._reporter.on_circuit_state_change(
-                    run_id=run_id,
-                    resource=self._provider.name(),
-                    prev_state=prev_state.value,
-                    new_state=new_state.value,
-                    failure_count=self._cb.stats().failure_count,
-                )
+                await self._report_cb_transition(run_id, prev_state, new_state)
+            raise
+        new_state = self._cb.state
+        if prev_state != new_state:
+            await self._report_cb_transition(run_id, prev_state, new_state)
         return result
+
+    async def _report_cb_transition(self, run_id: str, prev_state: Any, new_state: Any) -> None:
+        """Record a circuit breaker state transition in both the audit chain and CloudReporter."""
+        failure_count = self._cb.stats().failure_count
+        if self._audit:
+            self._audit.append(
+                "circuit_breaker_state_change",
+                actor=self._provider.name(),
+                payload={
+                    "resource": self._provider.name(),
+                    "prev_state": prev_state.value,
+                    "new_state": new_state.value,
+                    "failure_count": failure_count,
+                },
+            )
+        if self._reporter:
+            await self._reporter.on_circuit_state_change(
+                run_id=run_id,
+                resource=self._provider.name(),
+                prev_state=prev_state.value,
+                new_state=new_state.value,
+                failure_count=failure_count,
+            )
