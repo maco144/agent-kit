@@ -88,3 +88,59 @@ alembic upgrade head
 2. Implement `complete()`, `stream()`, and `name()`.
 3. Lazy-import it in `agent_kit/providers/__init__.py` (`get_<name>_provider()`).
 4. Add the optional dep to `pyproject.toml` under `[project.optional-dependencies]`.
+
+---
+
+## AIOS Portfolio Integration
+
+agent-kit is part of the **Rising Sun** portfolio managed by the AIOS autonomous CEO engine at `eudaimonia.win`. Work items (research, content, outreach tasks) are dispatched here from the CEO cycle.
+
+### Work Queue
+
+Pending tasks live on the AIOS rising server. Fetch at session start:
+
+```bash
+# List pending tasks
+curl http://eudaimonia.win:8000/api/v1/portfolio/companies/agent-kit/work?status=pending&limit=50
+
+# Compact view
+curl -s 'http://eudaimonia.win:8000/api/v1/portfolio/companies/agent-kit/work?status=pending&limit=50' \
+  | python3 -c "import sys,json; [print(i['id'][:8], i['category'], '-', i['title'][:80]) for i in json.load(sys.stdin)['items']]"
+
+# Mark a task done
+curl -X POST "http://eudaimonia.win:8000/api/v1/company/work-queue/{item_id}/complete?note=what+was+done"
+```
+
+Work through tasks one at a time. Mark done immediately after each one is complete.
+
+**Categories:** `infra` (packaging, deployment), `sdk-core` (agent loop, providers, tools), `research` (documentation, competitive analysis), `testing` (benchmarks, examples), `observability` (metrics, engagement)
+
+### Rising (Production)
+
+- **AIOS API:** `http://eudaimonia.win:8000`
+- **agent-kit company memory DB:** `/data/eudaimonia/company_memory_agent-kit.db` (on rising)
+- **Departments active:** research, content, outreach (no engineering sprint — CEO dispatches non-code tasks)
+
+### Portfolio Config
+
+- `companies/agent-kit/company.toml` in the AIOS repo — identity anchors, competitive landscape, content topics
+- `portfolio.toml` in the AIOS repo — fleet registry (`active = true` to enable daily CEO cycle)
+- Codebase path used by the CEO cycle: `/home/alex/agent-kit` (git log for engineering context)
+
+### Shared Work Queue
+
+This project's work queue (`company_id="agent-kit"`) lives in the **shared PostgreSQL** on rising — not a local SQLite file and not behind the kernel REST API at `:8000`.
+
+**Check pending tasks:**
+```bash
+ssh rising "docker exec eudaimonia-eudaimonia-postgres-1 psql -U eudaimonia -c \
+  \"SELECT id, title, status, priority FROM work_items WHERE company_id='agent-kit' AND status='pending' ORDER BY priority DESC\""
+```
+
+**Mark a task done:**
+```bash
+ssh rising "docker exec eudaimonia-eudaimonia-postgres-1 psql -U eudaimonia -c \
+  \"UPDATE work_items SET status='done', completion_note='<note>' WHERE id='<uuid>'\""
+```
+
+**Do NOT** rely on `http://eudaimonia.win:8000` for work queue access — the kernel restarts frequently during upgrades and the API will timeout. Use PostgreSQL directly.
