@@ -1,6 +1,6 @@
 # Project Index: agent-kit
 
-Generated: 2026-03-14
+Generated: 2026-03-21
 
 ## 📁 Project Structure
 
@@ -195,6 +195,7 @@ Managed by Alembic (`server/migrations/versions/`):
 | `specs/02-fleet-dashboard.md` | Agent fleet dashboard metrics (spec implemented) |
 | `specs/03-alerting.md` | Alerting rules, channels, evaluator (spec implemented) |
 | `specs/04-sla-support.md` | SLA-backed support context API (spec implemented) |
+| `specs/05-dashboard-ui.md` | Dashboard UI design spec |
 
 ## 🧪 Test Coverage
 
