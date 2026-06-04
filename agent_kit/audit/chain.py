@@ -36,8 +36,7 @@ class AuditChain:
     creating a chain where any tampering with a historical record invalidates
     all subsequent hashes.
 
-    This is the same construction used in the AIOS Merkle audit chain
-    (eudaimonia/kernel/audit/chain.py), extracted here as a standalone primitive.
+    A standard Merkle-style hash chain, provided here as a standalone primitive.
 
     Usage::
 
