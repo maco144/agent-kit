@@ -20,3 +20,6 @@ htmlcov/
 .coverage
 coverage.xml
 *.log
+
+# Local agent instructions — contains private infra details, keep out of VCS
+CLAUDE.md
