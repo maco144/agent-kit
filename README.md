@@ -448,4 +448,4 @@ See [`docs/cloud-quickstart.md`](docs/cloud-quickstart.md) to get started, or [`
 
 ## License
 
-[FSL-1.1-Apache-2.0](https://fsl.software). Source-available for use in non-competing products. Converts to Apache 2.0 two years after each release.
+[Rising Sun License v1.0](LICENSE). Free for personal use. Commercial deployments connect to the Nous network.

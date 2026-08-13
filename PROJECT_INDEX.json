@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "generated": "2026-03-12",
   "description": "Production-ready framework for building AI agents. Type-safe. Observable. Circuit-broken.",
-  "license": "FSL-1.1-Apache-2.0",
+  "license": "Rising Sun License v1.0",
   "python_requires": ">=3.11",
   "entry_points": {
     "package": "agent_kit/__init__.py",

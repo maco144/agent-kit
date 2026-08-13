@@ -171,7 +171,7 @@ Managed by Alembic (`server/migrations/versions/`):
 
 ## 🔧 Configuration
 
-- `pyproject.toml` — SDK build (hatchling), deps, pytest, ruff, mypy strict; license: FSL-1.1-Apache-2.0
+- `pyproject.toml` — SDK build (hatchling), deps, pytest, ruff, mypy strict; license: Rising Sun License v1.0
 - `server/pyproject.toml` — server build (hatchling), FastAPI/SQLAlchemy/Alembic deps; `agentkit-cloud-server v0.1.0`
 - `server/alembic.ini` — Alembic config; reads `DATABASE_URL` env var
 - Env vars: `ANTHROPIC_API_KEY`, `AGENTKIT_API_KEY`, `DATABASE_URL`, `ENABLE_ALERT_WORKER`
