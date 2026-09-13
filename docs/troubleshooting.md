@@ -222,9 +222,11 @@ result = await dag.run("The future of AI agents")
    config = AgentConfig(cloud=reporter)  # easy to forget
    ```
 
-3. **Check for queue overflow.** If events are being dropped due to a full queue, you'll see `DEBUG` log messages:
-   ```bash
-   export PYTHONPATH=. AGENTKIT_LOG_LEVEL=DEBUG python your_agent.py
+3. **Check for queue overflow.** Dropped events and failed shipments are logged at `DEBUG` on the `agent_kit.cloud` logger. Turn it on before creating the reporter:
+   ```python
+   import logging
+   logging.basicConfig()
+   logging.getLogger("agent_kit.cloud").setLevel(logging.DEBUG)
    ```
    Increase `max_queue_size` or decrease `flush_interval_s` if the queue is filling up.
 

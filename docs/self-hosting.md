@@ -23,12 +23,11 @@ FastAPI server (server/)
 ```bash
 cd server
 
-# Install dependencies
-pip install -r requirements.txt
+# Install the server (editable, with dev tools)
+pip install -e ".[dev]"
 
-# Set environment variables
+# Optional — defaults to sqlite+aiosqlite:///./agentkit_cloud.db
 export DATABASE_URL="sqlite+aiosqlite:///./agentkit.db"
-export SECRET_KEY="change-me-in-production"
 
 # Run migrations
 alembic upgrade head
@@ -59,7 +58,7 @@ async def seed():
         org = Organization(name="My Org")
         db.add(org)
         await db.flush()
-        db.add(ApiKey(org_id=org.id, key_hash=hashed, name="default"))
+        db.add(ApiKey(org_id=org.id, name="default", key_prefix=raw_key[:13], key_hash=hashed))
         await db.commit()
 
     print(f"API key: {raw_key}")
@@ -80,15 +79,19 @@ python scripts/seed_org.py
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `DATABASE_URL` | Yes | — | SQLAlchemy async URL (e.g. `postgresql+asyncpg://user:pass@host/db`) |
-| `SECRET_KEY` | Yes | — | Used for internal signing |
-| `ENABLE_ALERT_WORKER` | No | `""` | Set to `1` to run the 60-second alert evaluator |
-| `LOG_LEVEL` | No | `INFO` | Python logging level |
+| `DATABASE_URL` | Yes (production) | `sqlite+aiosqlite:///./agentkit_cloud.db` | SQLAlchemy async URL (e.g. `postgresql+asyncpg://user:pass@host/db`). SQLite URLs auto-create tables on startup; anything else expects `alembic upgrade head`. |
+| `ENABLE_ALERT_WORKER` | No | unset | `1` or `true` runs the 60-second alert evaluator in this process |
+| `SMTP_HOST` | For email alerts | unset | SMTP server. Unset = email channels log instead of sending |
+| `SMTP_PORT` | No | `587` (`465` with `ssl`) | SMTP port |
+| `SMTP_SECURITY` | No | `starttls` | `starttls`, `ssl` (implicit TLS), or `none` |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | No | unset | Credentials; login is skipped when `SMTP_USERNAME` is unset |
+| `SMTP_FROM` | No | `agent-kit <alerts@localhost>` | `From:` header — set this to a domain your SMTP relay is allowed to send as |
+
+Webhook channels sign deliveries with their own per-channel `secret` (see [API reference](api-reference.md#webhook-signatures)); there is no server-wide signing key.
 
 ### PostgreSQL
 
 ```bash
-pip install asyncpg
 export DATABASE_URL="postgresql+asyncpg://agentkit:password@localhost/agentkit"
 alembic upgrade head
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
@@ -99,11 +102,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 ```dockerfile
 FROM python:3.12-slim
 WORKDIR /app
-COPY server/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 COPY server/ .
+RUN pip install --no-cache-dir .
 ENV DATABASE_URL="postgresql+asyncpg://agentkit:password@db/agentkit"
-ENV ENABLE_ALERT_WORKER="1"
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4"]
 ```
 
@@ -111,7 +112,6 @@ CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --
 docker build -t agentkit-server .
 docker run -p 8000:8000 \
   -e DATABASE_URL="postgresql+asyncpg://..." \
-  -e SECRET_KEY="..." \
   agentkit-server
 ```
 
@@ -172,6 +172,21 @@ Migration history:
 
 ---
 
+## Email alerts (SMTP)
+
+Email channels deliver through any SMTP relay (SES, Postmark, SendGrid, Mailgun, your own MTA). Set `SMTP_HOST` and credentials:
+
+```bash
+export SMTP_HOST="email-smtp.us-east-1.amazonaws.com"
+export SMTP_USERNAME="..."
+export SMTP_PASSWORD="..."
+export SMTP_FROM="agent-kit <alerts@yourcompany.com>"
+```
+
+Then create a channel with `{"type": "email", "config": {"to": ["oncall@yourcompany.com"]}}` — a test email is sent on creation, and `POST /v1/alerts/channels/{id}/test` returns `{"sent": false, "error": ...}` if the relay rejects it. Without `SMTP_HOST`, email notifications are logged and dropped, which is the right behaviour for local dev and tests.
+
+---
+
 ## Alert worker
 
 The background alert worker evaluates polled alert rules (cost anomaly, error rate) every 60 seconds. It is opt-in to avoid unwanted side effects in test or read-only deployments.
@@ -180,7 +195,7 @@ The background alert worker evaluates polled alert rules (cost anomaly, error ra
 ENABLE_ALERT_WORKER=1 uvicorn app.main:app ...
 ```
 
-For production, run exactly one instance with `ENABLE_ALERT_WORKER=1` to avoid duplicate evaluations. The worker is safe to restart — it uses database state, not in-memory state.
+For production, run exactly one process with `ENABLE_ALERT_WORKER=1` to avoid duplicate evaluations. The worker starts per uvicorn worker process, so don't combine it with `--workers N` or multiple replicas — run a dedicated single-process deployment for it instead. The worker is safe to restart — it uses database state, not in-memory state.
 
 Event-driven alerts (circuit breaker open, audit integrity failure) fire immediately via the ingest pipeline and do not require the worker.
 

@@ -166,6 +166,76 @@ Re-verify the Merkle chain integrity for a run.
 
 ---
 
+### GET /v1/audit/runs/{run_id}/export
+
+Export a run's full audit chain as a file, for archival or third-party verification.
+
+**Query parameters**
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `format` | string | `jsonl` | `jsonl` or `csv` |
+
+`jsonl` emits one JSON object per line and is byte-compatible with the SDK's
+`AuditChain.export_jsonl()`, so a hosted export and a local export of the same run
+verify identically. `csv` is a flat tabular format that adds the `seq` and `verified`
+columns.
+
+**Response** `200 OK` — `application/x-ndjson` or `text/csv`, sent as an attachment
+(`Content-Disposition: attachment; filename="audit_{run_id}.jsonl"`).
+
+```
+{"event_id":"uuid","event_type":"run_start","actor":"billing-agent","payload_hash":"sha256...","prev_root":"0000...0000","leaf_hash":"sha256...","timestamp":"2026-03-12T14:00:00"}
+{"event_id":"uuid","event_type":"tool_call","actor":"billing-agent","payload_hash":"sha256...","prev_root":"sha256...","leaf_hash":"sha256...","timestamp":"2026-03-12T14:00:03"}
+```
+
+**Response** `404 Not Found` — run does not exist in this org.
+
+---
+
+### GET /v1/audit/events
+
+Search audit events across every run in the org. Use this when you know *what*
+happened but not *which run* it happened in.
+
+**Query parameters**
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `event_type` | string | — | Exact match, e.g. `tool_call`, `circuit_open` |
+| `actor` | string | — | Filter by actor (usually the agent name) |
+| `from` | datetime | — | ISO-8601 lower bound on `timestamp`, inclusive |
+| `to` | datetime | — | ISO-8601 upper bound on `timestamp`, inclusive |
+| `project` | string | — | Filter by the parent run's project |
+| `limit` | int | 50 | Max results (1–200) |
+| `cursor` | string | — | Pagination cursor from the previous response |
+
+Results are ordered by `timestamp` descending.
+
+**Response** `200 OK`
+
+```json
+{
+  "events": [
+    {
+      "seq": 4,
+      "event_id": "uuid",
+      "event_type": "tool_call",
+      "actor": "billing-agent",
+      "payload_hash": "sha256...",
+      "prev_root": "sha256...",
+      "leaf_hash": "sha256...",
+      "timestamp": "2026-03-12T14:00:03",
+      "verified": true
+    }
+  ],
+  "next_cursor": "eyJ...",
+  "total": 1284
+}
+```
+
+---
+
 ## Metrics
 
 All metrics endpoints accept the same time-window query parameters:
@@ -373,9 +443,9 @@ Supported types and their `config` fields:
 
 | Type | Config fields |
 |---|---|
-| `email` | `to` (email address) |
+| `email` | `to` (list of addresses). Sent over SMTP when the server has `SMTP_HOST` configured ([self-hosting](self-hosting.md#email-alerts-smtp)); otherwise logged to `agentkit.cloud.alerts` and not delivered |
 | `slack` | `webhook_url` |
-| `pagerduty` | `integration_key` (Events API v2 routing key) |
+| `pagerduty` | `routing_key` (Events API v2 integration key), `severity` (optional, default `error`) |
 | `webhook` | `url`, `secret` (optional, for HMAC signing) |
 
 **Response** `201 Created`
@@ -616,6 +686,14 @@ Valid tiers: `free`, `pro`, `enterprise`.
   "sla": { ... }
 }
 ```
+
+---
+
+## Health
+
+### GET /healthz
+
+Unauthenticated liveness probe. Returns `200 OK` with `{"status": "ok"}`.
 
 ---
 
