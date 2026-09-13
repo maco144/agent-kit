@@ -7,7 +7,10 @@ import hashlib
 import hmac
 import json
 import logging
+import os
+import smtplib
 from datetime import datetime
+from email.message import EmailMessage
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -62,7 +65,7 @@ async def send_to_channel(channel: AlertChannel, event: str, payload: dict) -> N
     elif channel.type == "webhook":
         await _send_webhook(channel.config, event, payload)
     elif channel.type == "email":
-        _log_email(channel.config, event, payload)
+        await _send_email(channel.config, event, payload)
 
 
 async def send_test_notification(channel: AlertChannel) -> None:
@@ -121,7 +124,8 @@ async def _send_slack(config: dict, event: str, payload: dict) -> None:
 
 
 async def _send_pagerduty(config: dict, event: str, payload: dict) -> None:
-    routing_key = config.get("routing_key", "")
+    # `integration_key` is accepted for channels created from older docs.
+    routing_key = config.get("routing_key") or config.get("integration_key", "")
     if not routing_key:
         raise ValueError("PagerDuty channel missing routing_key")
 
@@ -173,23 +177,71 @@ async def _send_webhook(config: dict, event: str, payload: dict) -> None:
                 resp = await client.post(url, content=body_bytes, headers=headers)
                 resp.raise_for_status()
             return
-        except Exception as exc:
+        except Exception:
             if attempt == 2:
                 raise
             await asyncio.sleep(2.0 ** attempt)
 
 
-def _log_email(config: dict, event: str, payload: dict) -> None:
-    """Log-only email delivery (no SMTP configured in dev)."""
-    to: list[str] = config.get("to", [])
-    agent = payload.get("agent_name", "*")
-    alert_type = payload.get("type", "")
-    rule_name = payload.get("rule_name", "")
+async def _send_email(config: dict, event: str, payload: dict) -> None:
+    """Send via SMTP when SMTP_HOST is set; otherwise log the message (dev/test)."""
+    to_cfg = config.get("to", [])
+    to: list[str] = [to_cfg] if isinstance(to_cfg, str) else list(to_cfg)
+    if not to:
+        raise ValueError("Email channel missing to")
+
     status = "ALERT" if event == "alert.firing" else ("RESOLVED" if event == "alert.resolved" else "TEST")
-    logger.info(
-        "Email [%s] to=%s subject='[agent-kit] %s: %s — %s (%s)'",
-        event, to, status, alert_type, rule_name, agent,
+    subject = (
+        f"[agent-kit] {status}: {payload.get('type', '')} — "
+        f"{payload.get('rule_name', '')} ({payload.get('agent_name', '*')})"
     )
+
+    host = os.environ.get("SMTP_HOST", "")
+    if not host:
+        logger.info("Email [%s] to=%s subject=%r (SMTP_HOST unset — not sent)", event, to, subject)
+        return
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = os.environ.get("SMTP_FROM", "agent-kit <alerts@localhost>")
+    msg["To"] = ", ".join(to)
+    msg.set_content(_email_body(event, payload))
+
+    await asyncio.to_thread(_smtp_send, host, msg)
+
+
+def _smtp_send(host: str, msg: EmailMessage) -> None:
+    security = os.environ.get("SMTP_SECURITY", "starttls").lower()
+    if security not in ("starttls", "ssl", "none"):
+        raise ValueError(f"SMTP_SECURITY must be starttls, ssl, or none (got {security!r})")
+    port = int(os.environ.get("SMTP_PORT") or (465 if security == "ssl" else 587))
+    username = os.environ.get("SMTP_USERNAME", "")
+    password = os.environ.get("SMTP_PASSWORD", "")
+
+    smtp_cls = smtplib.SMTP_SSL if security == "ssl" else smtplib.SMTP
+    with smtp_cls(host, port, timeout=10.0) as smtp:
+        if security == "starttls":
+            smtp.starttls()
+        if username:
+            smtp.login(username, password)
+        smtp.send_message(msg)
+
+
+def _email_body(event: str, payload: dict) -> str:
+    lines = [
+        f"Rule:    {payload.get('rule_name', '')}",
+        f"Type:    {payload.get('type', '')}",
+        f"Agent:   {payload.get('agent_name', '*')}",
+        f"Project: {payload.get('project', '*')}",
+        f"Event:   {event}",
+        f"Fired:   {payload.get('fired_at', '')}",
+    ]
+    if payload.get("alert_id"):
+        lines.append(f"Alert:   {payload['alert_id']}")
+    context = payload.get("context") or {}
+    if context:
+        lines += ["", "Context:", json.dumps(context, indent=2, default=str)]
+    return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------------------

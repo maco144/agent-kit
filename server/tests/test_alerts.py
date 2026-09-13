@@ -13,7 +13,6 @@ from sqlalchemy import select
 
 from app.alerting.evaluator import (
     evaluate_all_rules,
-    fire_circuit_breaker_open,
 )
 from app.models import AlertChannel, AlertFiring, AlertRule, AgentMetricSnapshot
 
@@ -491,7 +490,6 @@ async def test_integrity_failure_no_auto_resolve(client, db, org_and_key):
     """audit_integrity_failure must never auto-resolve."""
     org, _ = org_and_key
     ch = await _make_channel(client, "email")
-    agent = f"integrity-{uuid.uuid4().hex[:6]}"
     rule_resp = await _make_rule(
         client, "audit_integrity_failure", [ch["channel"]["id"]],
         config={"agent_name": "*", "project": "*"},
@@ -545,7 +543,6 @@ async def test_webhook_hmac_signature(client, db, org_and_key):
     """Webhook channel includes correct HMAC signature when secret is set."""
     import hashlib
     import hmac as _hmac
-    import json as _json
     from app.alerting.dispatch import _send_webhook
 
     config = {"url": "https://hook.example.com/test", "secret": "my-secret"}
@@ -577,6 +574,126 @@ async def test_webhook_hmac_signature(client, db, org_and_key):
             b"my-secret", body_bytes, hashlib.sha256
         ).hexdigest()
         assert headers_sent["X-AgentKit-Signature"] == f"sha256={expected_sig}"
+
+
+# ---------------------------------------------------------------------------
+# Email dispatch — SMTP
+# ---------------------------------------------------------------------------
+
+
+class _FakeSMTP:
+    instances: list[_FakeSMTP] = []
+
+    def __init__(self, host: str, port: int, timeout: float) -> None:
+        self.host, self.port = host, port
+        self.calls: list[str] = []
+        self.sent: list = []
+        _FakeSMTP.instances.append(self)
+
+    def __enter__(self) -> _FakeSMTP:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.calls.append("quit")
+
+    def starttls(self) -> None:
+        self.calls.append("starttls")
+
+    def login(self, user: str, password: str) -> None:
+        self.calls.append(f"login:{user}")
+
+    def send_message(self, msg) -> None:
+        self.sent.append(msg)
+
+
+_EMAIL_PAYLOAD = {
+    "event": "alert.firing",
+    "alert_id": "f-123",
+    "rule_name": "billing CB",
+    "type": "circuit_breaker_open",
+    "agent_name": "billing-assistant",
+    "project": "production",
+    "fired_at": "2026-09-13T12:00:00",
+    "context": {"failure_count": 5},
+}
+
+
+@pytest.fixture
+def fake_smtp(monkeypatch):
+    for var in ("SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM", "SMTP_SECURITY"):
+        monkeypatch.delenv(var, raising=False)
+    _FakeSMTP.instances = []
+    monkeypatch.setattr("app.alerting.dispatch.smtplib.SMTP", _FakeSMTP)
+    monkeypatch.setattr("app.alerting.dispatch.smtplib.SMTP_SSL", _FakeSMTP)
+    return _FakeSMTP
+
+
+async def test_email_without_smtp_host_logs_only(fake_smtp, caplog):
+    from app.alerting.dispatch import _send_email
+
+    with caplog.at_level("INFO", logger="agentkit.cloud.alerts"):
+        await _send_email({"to": ["ops@example.com"]}, "alert.firing", _EMAIL_PAYLOAD)
+
+    assert fake_smtp.instances == []
+    assert "not sent" in caplog.text
+
+
+async def test_email_sends_via_smtp_starttls(fake_smtp, monkeypatch):
+    from app.alerting.dispatch import _send_email
+
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_USERNAME", "alerts")
+    monkeypatch.setenv("SMTP_PASSWORD", "hunter2")
+    monkeypatch.setenv("SMTP_FROM", "agent-kit <alerts@example.com>")
+
+    await _send_email({"to": ["a@example.com", "b@example.com"]}, "alert.firing", _EMAIL_PAYLOAD)
+
+    (smtp,) = fake_smtp.instances
+    assert (smtp.host, smtp.port) == ("smtp.example.com", 587)
+    assert smtp.calls == ["starttls", "login:alerts", "quit"]
+    (msg,) = smtp.sent
+    assert msg["To"] == "a@example.com, b@example.com"
+    assert msg["From"] == "agent-kit <alerts@example.com>"
+    assert msg["Subject"] == "[agent-kit] ALERT: circuit_breaker_open — billing CB (billing-assistant)"
+    body = msg.get_content()
+    assert "Project: production" in body
+    assert '"failure_count": 5' in body
+
+
+async def test_email_ssl_mode_defaults_to_port_465(fake_smtp, monkeypatch):
+    from app.alerting.dispatch import _send_email
+
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_SECURITY", "ssl")
+
+    await _send_email({"to": "ops@example.com"}, "alert.resolved", _EMAIL_PAYLOAD)
+
+    (smtp,) = fake_smtp.instances
+    assert smtp.port == 465
+    assert smtp.calls == ["quit"]  # no STARTTLS, no login without SMTP_USERNAME
+    assert smtp.sent[0]["Subject"].startswith("[agent-kit] RESOLVED:")
+
+
+async def test_email_missing_recipients_raises(fake_smtp):
+    from app.alerting.dispatch import _send_email
+
+    with pytest.raises(ValueError, match="missing to"):
+        await _send_email({}, "alert.firing", _EMAIL_PAYLOAD)
+
+
+async def test_pagerduty_accepts_legacy_integration_key():
+    from app.alerting.dispatch import _send_pagerduty
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        instance = AsyncMock()
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        instance.post = AsyncMock(return_value=AsyncMock())
+        mock_client_cls.return_value = instance
+
+        await _send_pagerduty({"integration_key": "legacy-key"}, "alert.firing", _EMAIL_PAYLOAD)
+
+        assert instance.post.call_args.kwargs["json"]["routing_key"] == "legacy-key"
 
 
 @pytest.mark.asyncio
