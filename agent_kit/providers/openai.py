@@ -53,7 +53,7 @@ def _to_openai_tools(schemas: list[ToolSchema]) -> list[dict[str, Any]]:
 
 
 def _messages_to_openai(messages: list[Message]) -> list[dict[str, Any]]:
-    result = []
+    result: list[dict[str, Any]] = []
     for msg in messages:
         if msg.role == "tool":
             result.append(
@@ -61,6 +61,21 @@ def _messages_to_openai(messages: list[Message]) -> list[dict[str, Any]]:
                     "role": "tool",
                     "tool_call_id": msg.tool_call_id,
                     "content": msg.content,
+                }
+            )
+        elif msg.role == "assistant" and msg.tool_calls:
+            result.append(
+                {
+                    "role": "assistant",
+                    "content": msg.content or None,
+                    "tool_calls": [
+                        {
+                            "id": tc.call_id,
+                            "type": "function",
+                            "function": {"name": tc.tool_name, "arguments": json.dumps(tc.arguments)},
+                        }
+                        for tc in msg.tool_calls
+                    ],
                 }
             )
         else:
@@ -171,7 +186,7 @@ class OpenAIProvider:
             model=resolved_model,
         )
 
-        assistant_msg = Message(role="assistant", content=msg.content or "")
+        assistant_msg = Message(role="assistant", content=msg.content or "", tool_calls=tool_calls)
         return Turn(
             messages_in=messages,
             message_out=assistant_msg,
