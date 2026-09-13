@@ -1,0 +1,27 @@
+# Examples
+
+Every example is a single runnable file. They go in roughly increasing order of surface area — start at the top.
+
+```bash
+pip install -e ".[dev]"
+export ANTHROPIC_API_KEY=sk-ant-...
+python examples/hello_agent.py
+```
+
+| Example | Lines | What it shows | Needs |
+|---|---|---|---|
+| [`hello_agent.py`](hello_agent.py) | 16 | The minimal agent — one provider, one `run()`, cost and token accounting for free. | API key |
+| [`pipeline_example.py`](pipeline_example.py) | 40 | `LinearPipeline` — a three-stage research → draft → edit chain where each agent's output feeds the next. | API key |
+| [`multi_tool_agent.py`](multi_tool_agent.py) | 54 | The `@tool` decorator with several tools and console tracing. Calls live public APIs (CoinGecko), so no second key is needed. | API key |
+| [`research_dag.py`](research_dag.py) | 85 | `DAGOrchestrator` — three researchers run concurrently, a fourth synthesizes. Prints the wall-clock speedup over sequential execution. | API key |
+| [`safe_agent.py`](safe_agent.py) | 111 | The production posture: tool allowlisting, the tamper-evident Merkle audit chain, chain verification, and JSONL export for compliance. | API key |
+| [`cloud_monitored.py`](cloud_monitored.py) | 148 | Full fleet observability — `CloudReporter` shipping lifecycle events to agent-kit Cloud, plus circuit breaker config and per-run cost attribution. Runs locally with cloud reporting off when `AGENTKIT_API_KEY` is unset. | API key; cloud optional |
+
+## Notes
+
+- **`ANTHROPIC_API_KEY`** is read from the environment by `AnthropicProvider()` — no example takes a key as an argument. To run against OpenAI or a local Ollama model instead, swap the provider; see the Providers section of the [README](../README.md#providers).
+- **These make real API calls and cost real money.** `hello_agent.py` is a fraction of a cent; `research_dag.py` runs four agents.
+- **`cloud_monitored.py` runs without a backend.** Set `AGENTKIT_API_KEY` to ship events to agent-kit Cloud (`https://ingest.agentkit.io` by default; pass `base_url=` to `CloudReporter` for a self-hosted server) — see [`docs/cloud-quickstart.md`](../docs/cloud-quickstart.md).
+- Three of these are reproduced with their real console output in the [README demos](../README.md#demos).
+
+CI byte-compiles every file in this directory, so an example that stops importing fails the build.

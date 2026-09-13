@@ -45,6 +45,7 @@ Issues     = "https://github.com/maco144/agent-kit/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agent_kit"]
+artifacts = ["agent_kit/py.typed"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

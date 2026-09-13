@@ -1,6 +1,6 @@
 # Project Index: agent-kit
 
-Generated: 2026-09-08
+Generated: 2026-09-13
 
 ## 📁 Project Structure
 
@@ -57,10 +57,10 @@ agent-kit/
 │   ├── migrations/         # Alembic versions 001–004
 │   ├── tests/              # 4 server test files
 │   └── pyproject.toml      # agentkit-cloud-server v0.1.0
-├── tests/                  # SDK tests (10 test files)
-├── examples/               # 3 example scripts
+├── tests/                  # SDK tests (9 test files + conftest)
+├── examples/               # 6 example scripts + README
 ├── docs/                   # 4 cloud documentation files
-├── specs/                  # 5 platform spec files
+├── specs/                  # 6 platform spec files (00–05)
 └── pyproject.toml          # SDK build config + deps
 ```
 
@@ -68,7 +68,7 @@ agent-kit/
 
 - **SDK Package**: `agent_kit/__init__.py` — exports `Agent`, `AgentConfig`, `Tool`, `tool`, result types
 - **Cloud Server**: `server/app/main.py` — FastAPI app (`uvicorn app.main:app`)
-- **Examples**: `examples/hello_agent.py`, `examples/multi_tool_agent.py`, `examples/pipeline_example.py`
+- **Examples**: `hello_agent.py`, `multi_tool_agent.py`, `pipeline_example.py`, `research_dag.py`, `safe_agent.py`, `cloud_monitored.py` (see `examples/README.md`)
 - **SDK Tests**: `pytest tests/` (asyncio_mode=auto)
 - **Server Tests**: `cd server && pytest tests/` (asyncio_mode=auto)
 
@@ -137,6 +137,13 @@ agent-kit/
 - `GET /v1/metrics/circuit-breaker` — circuit breaker state history with open-duration tracking
 - `GET /v1/metrics/active` — live active runs (excludes stale >1h)
 
+### `server/app/routers/audit.py` — Hosted Audit Trail
+- `GET /v1/audit/runs` — list runs; filters `project`, `agent_name` (trailing `*` wildcard), `from`/`to`, `integrity`; cursor-paginated (max 500)
+- `GET /v1/audit/runs/{run_id}` — run detail with events
+- `GET /v1/audit/runs/{run_id}/verify` — re-derive chain hashes on demand (non-mutating)
+- `GET /v1/audit/runs/{run_id}/export` — export chain as `jsonl` or `csv`
+- `GET /v1/audit/events` — event search by `event_type`, `actor`, `project`, time range
+
 ### `server/app/routers/alerts.py` — Alerting CRUD
 - `GET|POST|DELETE /v1/alerts/channels` — notification channels (email, Slack, PagerDuty, webhook)
 - `POST /v1/alerts/channels/{id}/test` — send test notification
@@ -174,13 +181,18 @@ Managed by Alembic (`server/migrations/versions/`):
 - `pyproject.toml` — SDK build (hatchling), deps, pytest, ruff, mypy strict; license: Rising Sun License v1.0
 - `server/pyproject.toml` — server build (hatchling), FastAPI/SQLAlchemy/Alembic deps; `agentkit-cloud-server v0.1.0`
 - `server/alembic.ini` — Alembic config; reads `DATABASE_URL` env var
-- Env vars: `ANTHROPIC_API_KEY`, `AGENTKIT_API_KEY`, `DATABASE_URL`, `ENABLE_ALERT_WORKER`
+- Env vars: `ANTHROPIC_API_KEY`, `AGENTKIT_API_KEY`, `DATABASE_URL`, `ENABLE_ALERT_WORKER`, `SMTP_HOST`/`SMTP_PORT`/`SMTP_SECURITY`/`SMTP_USERNAME`/`SMTP_PASSWORD`/`SMTP_FROM` (email alerts)
+- `.github/workflows/ci.yml` — CI: ruff + mypy + pytest (SDK), ruff + pytest + `alembic upgrade head` (server), example byte-compile; Python 3.11 & 3.12
+- `agent_kit/py.typed` — PEP 561 marker; downstream type checkers see the inline hints
 
 ## 📚 Documentation
 
 | File | Topic |
 |------|-------|
 | `README.md` | SDK quick start, all features with code examples |
+| `CONTRIBUTING.md` | Setup, the checks CI runs, conventions, adding providers/endpoints |
+| `CHANGELOG.md` | Release history (Keep a Changelog + SemVer) |
+| `examples/README.md` | Index of the six runnable examples |
 | `docs/cloud-quickstart.md` | Connecting the SDK to agent-kit Cloud |
 | `docs/self-hosting.md` | Running the server yourself (Docker, Postgres, Alembic) |
 | `docs/api-reference.md` | Full REST API reference |

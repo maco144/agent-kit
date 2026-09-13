@@ -23,3 +23,8 @@ coverage.xml
 
 # Local agent instructions — contains private infra details, keep out of VCS
 CLAUDE.md
+
+# Local SQLite databases (dev server, alembic smoke tests)
+*.db
+*.db-journal
+*.sqlite3

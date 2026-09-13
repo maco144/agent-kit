@@ -1,7 +1,7 @@
 {
   "project": "agent-kit",
   "version": "0.2.0",
-  "generated": "2026-09-08",
+  "generated": "2026-09-13",
   "description": "Production-ready framework for building AI agents. Type-safe. Observable. Circuit-broken.",
   "license": "Rising Sun License v1.0",
   "python_requires": ">=3.11",
@@ -401,6 +401,9 @@
   },
   "docs": [
     "README.md",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
+    "examples/README.md",
     "docs/cloud-quickstart.md",
     "docs/self-hosting.md",
     "docs/api-reference.md",
@@ -418,5 +421,23 @@
     "tool": "alembic",
     "path": "server/migrations/versions/",
     "count": 4
+  },
+  "ci": {
+    "workflow": ".github/workflows/ci.yml",
+    "python_versions": [
+      "3.11",
+      "3.12"
+    ],
+    "sdk": [
+      "ruff check agent_kit tests",
+      "mypy agent_kit",
+      "pytest"
+    ],
+    "server": [
+      "ruff check app tests",
+      "pytest",
+      "alembic upgrade head"
+    ],
+    "examples": "python -m compileall examples/"
   }
 }
