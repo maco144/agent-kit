@@ -8,19 +8,19 @@ first-party harnesses (Claude Agent SDK, OpenAI Agents SDK) and frameworks (Lang
 now ship as table stakes, and two core paths were broken as of this writing. This spec is the
 working plan to close that gap, in order.
 
-## Where we stand (2026-09-13)
+## Where we stand (2026-09-13, updated after Tier 1)
 
 | Capability | agent-kit | First-party SDKs | LangGraph / Pydantic AI |
 |---|---|---|---|
-| Multi-turn tool loop | Broken — tool calls dropped from history | ✅ | ✅ |
-| Parallel tool calls | Sequential | ✅ | ✅ |
+| Multi-turn tool loop | ✅ (was broken — fixed in Tier 1) | ✅ | ✅ |
+| Parallel tool calls | ✅ (Tier 1) | ✅ | ✅ |
 | MCP client | ❌ | ✅ | ✅ |
 | Typed / structured output | ❌ | ✅ | ✅ |
 | Approval gates / hooks | Allowlist only | ✅ | ✅ |
 | Context management | Message-count window | ✅ | Partial |
 | Durable runs / resume | ❌ | Sessions | ✅ |
 | Sub-agents / handoffs | Static DAG | ✅ | ✅ |
-| Streaming with tools | ❌ | ✅ | ✅ |
+| Streaming with tools | ✅ (Tier 1) | ✅ | ✅ |
 | Per-provider circuit breaker | ✅ | ❌ | ❌ |
 | Tamper-evident audit + server verify | ✅ | ❌ | ❌ |
 | Self-hosted fleet metrics + alerting | ✅ | ❌ | Hosted, paid |
@@ -43,13 +43,13 @@ working plan to close that gap, in order.
 
 Implementation plan: `docs/superpowers/plans/2026-09-13-tier1-harness-fundamentals.md`
 
-- [ ] **1.1** Tool calls round-trip through history (Anthropic, OpenAI/Ollama, SQLite persistence)
-- [ ] **1.2** Provider request-capture tests replace class-level mocks for adapter coverage
-- [ ] **1.3** Memory windows never orphan tool results
-- [ ] **1.4** Parallel tool execution; sync tools off the event loop
-- [ ] **1.5** Pricing: exact model families, longest-prefix match, cache tokens, warn on unknown
-- [ ] **1.6** `Agent.stream()` runs the full loop with tools, retry, circuit breaker, audit, cloud
-- [ ] **1.7** README positioning and contributor testing guidance rewritten to match reality
+- [x] **1.1** Tool calls round-trip through history (Anthropic, OpenAI/Ollama, SQLite persistence)
+- [x] **1.2** Provider request-capture tests replace class-level mocks for adapter coverage
+- [x] **1.3** Memory windows never orphan tool results
+- [x] **1.4** Parallel tool execution; sync tools off the event loop
+- [x] **1.5** Pricing: exact model families, longest-prefix match, cache tokens, warn on unknown
+- [x] **1.6** `Agent.stream()` runs the full loop with tools, retry, circuit breaker, audit, cloud
+- [x] **1.7** README positioning and contributor testing guidance rewritten to match reality
 
 ## Tier 2 — Parity
 

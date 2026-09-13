@@ -10,17 +10,22 @@ pip install agent-kit
 
 ## Why agent-kit?
 
-LangChain, CrewAI, and AutoGen solve agent *coordination*. agent-kit solves agent *infrastructure*:
+First-party SDKs and agent frameworks give you a capable loop. agent-kit is for what comes after the
+demo — running agents you can trust, afford, and prove things about:
 
-| Feature | agent-kit | LangChain | CrewAI | AutoGen |
-|---------|:---------:|:---------:|:------:|:-------:|
-| Circuit breakers | ✅ | ❌ | ❌ | ❌ |
-| Retry with idempotency | ✅ | partial | ❌ | ❌ |
-| Tamper-evident audit trail | ✅ | ❌ | ❌ | ❌ |
-| Type-safe throughout (Pydantic v2) | ✅ | partial | partial | ❌ |
-| Built-in cost tracking | ✅ | ❌ | ❌ | ❌ |
-| Zero mandatory deps beyond anthropic | ✅ | ❌ | ❌ | ❌ |
-| OpenTelemetry-compatible tracing | ✅ | ❌ | ❌ | ❌ |
+| Built in | What you get |
+|---|---|
+| Per-provider circuit breaker | Stops hammering a failing provider; every state change lands in the audit chain |
+| Retry with backoff | Transient provider failures retried under a configurable policy |
+| Tamper-evident audit chain | Hash-linked record of every LLM call and tool call; verify locally, re-verified server-side, JSONL/CSV export |
+| Cost per turn | Token- and cache-aware USD for current Claude and OpenAI models; unpriced models are logged, not silently $0 |
+| Self-hostable ops backend | Fleet metrics, alerting (Slack, PagerDuty, webhook, SMTP), and SLA context — see [agent-kit Cloud](#agent-kit-cloud) |
+| Provider-neutral | Anthropic, OpenAI, Ollama, and any OpenAI-compatible endpoint behind one interface |
+| OpenTelemetry | No-op by default; console JSON or OTLP export when you want it |
+
+Tool calls run in parallel, and `agent.stream()` runs the same loop as `agent.run()` — tools, retry,
+circuit breaking, and audit included. Not yet: MCP tools, typed outputs, approval hooks, and resumable
+runs — tracked in [specs/06-harness-roadmap.md](specs/06-harness-roadmap.md).
 
 ---
 

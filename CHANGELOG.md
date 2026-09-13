@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 ## [Unreleased]
 
 ### Added
+- `Agent.stream()` now runs the full agent loop — tools execute between turns, and retry, circuit breaking, audit, and cloud reporting apply. The finished `AgentResult` is available as `agent.last_result` (also set by `run()`). Provider `stream()` accepts `tools` and may yield a final `Turn` after its text chunks; text-only providers keep working.
+- Tool calls within one turn run concurrently; synchronous tools run in a worker thread instead of blocking the event loop.
+- `CostSummary.cache_read_tokens` / `cache_write_tokens`; Anthropic cost includes cache reads and writes.
+- `specs/06-harness-roadmap.md` — the plan for closing harness gaps (fundamentals, parity, differentiators).
 - **SMTP delivery for email alert channels.** Configure with `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` (`starttls`/`ssl`/`none`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`. Without `SMTP_HOST`, email notifications are logged as before. Previously email channels never sent mail.
 - `agent_kit/py.typed` — the package now advertises its inline type hints to downstream type checkers (PEP 561).
 - GitHub Actions CI (`.github/workflows/ci.yml`) — ruff, mypy, and pytest for the SDK on Python 3.11/3.12; ruff, pytest, and an Alembic `upgrade head` smoke test for the cloud server.
@@ -17,6 +21,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 - `PROJECT_INDEX.json` now covers the cloud server (13 modules, server tests, server dependencies) alongside the SDK.
 
 ### Fixed
+- **Multi-turn tool use failed on Anthropic and OpenAI.** Assistant tool calls were not stored in history, so the request after a tool call carried an empty assistant turn and orphaned tool results, which both APIs reject. `Message.tool_calls` now round-trips through both adapters (and Ollama) and `SQLiteMemory` (existing databases migrate automatically); parallel tool results share one message and failed tools set `is_error`.
+- Memory windows could split a tool call from its results; trimming now keeps tool exchanges intact.
+- Cost tracking reported $0 for Claude Opus 5, Sonnet 5, and Fable; billed Opus 4.5–4.8 at 3× actual; understated Haiku 4.5; priced `gpt-4o-mini` as `gpt-4o`. Prices now use longest-prefix matching, and unknown models log a warning.
 - `BaseProvider.stream()` was declared `async def` while every implementation is an async generator, so `Agent.stream()` failed type checking. The annotation now matches the runtime contract. No behaviour change — streaming worked correctly at runtime.
 - `AgentLoop.run()` bound one local name to both a `ToolResult` and an `AgentResult`; the tool-call result is now `tool_result`.
 - `docs/self-hosting.md` was not runnable: it installed from a nonexistent `requirements.txt` (the Dockerfile failed at `COPY`), listed `SECRET_KEY` and `LOG_LEVEL` env vars the server never reads, the seed script omitted the required `ApiKey.key_prefix`, and the Docker image baked `ENABLE_ALERT_WORKER=1` into a `--workers 4` process (duplicate alert evaluations).

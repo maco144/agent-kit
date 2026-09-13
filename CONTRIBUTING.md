@@ -57,7 +57,7 @@ These are load-bearing. Breaking them breaks something downstream:
 ## Testing
 
 - `pytest-asyncio` runs in `asyncio_mode = "auto"` in both suites — do not add `@pytest.mark.asyncio`.
-- SDK: mock providers at the **HTTP layer with `respx`**. Do not mock `BaseProvider` — that tests the mock, not the adapter.
+- SDK: test provider adapters by injecting a fake client that records request kwargs — see `tests/test_provider_requests.py` — and assert the exact payload the SDK would send. Don't use `respx` for Anthropic: `anthropic>=1.0` uses `httpx2`, which respx doesn't intercept, so requests silently reach the network. Agent-loop behaviour can use `MockProvider` from `tests/conftest.py`.
 - Server: tests run against a real in-process SQLite database via `aiosqlite`. Do not mock the DB layer.
 - Fixtures live in `tests/conftest.py` and `server/tests/conftest.py`.
 

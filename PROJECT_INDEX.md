@@ -17,6 +17,7 @@ agent-kit/
 │   │   ├── anthropic.py    # AnthropicProvider (default)
 │   │   ├── openai.py       # OpenAIProvider (optional dep)
 │   │   ├── ollama.py       # OllamaProvider (local models)
+│   │   ├── pricing.py      # Longest-prefix model price lookup
 │   │   └── base.py         # BaseProvider + ProviderConfig
 │   ├── tools/              # Tool system
 │   │   ├── base.py         # Tool class + @tool decorator
@@ -26,7 +27,8 @@ agent-kit/
 │   │   └── dag.py          # DAGOrchestrator (parallel DAG)
 │   ├── memory/             # Conversation memory backends
 │   │   ├── in_memory.py    # InMemoryStore (default, windowed)
-│   │   └── sqlite.py       # SQLiteMemory (persistent, thread-safe)
+│   │   ├── sqlite.py       # SQLiteMemory (persistent, thread-safe)
+│   │   └── window.py       # window_indices — trimming that keeps tool exchanges intact
 │   ├── reliability/        # Resilience primitives
 │   │   ├── retry.py        # RetryPolicy (exponential backoff)
 │   │   └── circuit_breaker.py  # CircuitBreaker (CLOSED/OPEN/HALF_OPEN)
@@ -57,10 +59,10 @@ agent-kit/
 │   ├── migrations/         # Alembic versions 001–004
 │   ├── tests/              # 4 server test files
 │   └── pyproject.toml      # agentkit-cloud-server v0.1.0
-├── tests/                  # SDK tests (9 test files + conftest)
+├── tests/                  # SDK tests (11 test files + conftest)
 ├── examples/               # 6 example scripts + README
 ├── docs/                   # 4 cloud documentation files
-├── specs/                  # 6 platform spec files (00–05)
+├── specs/                  # 7 spec files (00–06)
 └── pyproject.toml          # SDK build config + deps
 ```
 
@@ -77,7 +79,7 @@ agent-kit/
 ### `agent_kit.agent.agent` — Agent
 - **Exports**: `Agent`, `AgentConfig`
 - Primary user-facing class. Wraps provider + tools + memory + tracer + audit chain + cloud reporter.
-- Key methods: `run(prompt) -> AgentResult`, `stream(prompt) -> AsyncIterator[str]`, `add_tool(t) -> Agent`
+- Key methods: `run(prompt) -> AgentResult`, `stream(prompt) -> AsyncIterator[str]` (full loop: tools, retry, audit), `add_tool(t) -> Agent`; `last_result` holds the latest `AgentResult`
 
 ### `agent_kit.types` — Shared Pydantic Models
 - **Exports**: `Message`, `ToolCall`, `ToolResult`, `Turn`, `AgentResult`, `PipelineResult`, `RetryPolicyConfig`, `BackoffConfig`, `CircuitBreakerConfig`, `SpanEvent`, `AuditEventRecord`
@@ -208,6 +210,7 @@ Managed by Alembic (`server/migrations/versions/`):
 | `specs/03-alerting.md` | Alerting rules, channels, evaluator (spec implemented) |
 | `specs/04-sla-support.md` | SLA-backed support context API (spec implemented) |
 | `specs/05-dashboard-ui.md` | Dashboard UI design spec |
+| `specs/06-harness-roadmap.md` | Harness roadmap: Tier 1 fundamentals (done), Tier 2 parity, Tier 3 differentiators |
 
 ## 🧪 Test Coverage
 
@@ -224,6 +227,8 @@ Managed by Alembic (`server/migrations/versions/`):
 | `test_dag.py` | DAGOrchestrator + cycle detection |
 | `test_sqlite_memory.py` | SQLiteMemory persistence |
 | `test_cloud_reporter.py` | CloudReporter batching + HTTP shipping |
+| `test_provider_requests.py` | Exact Anthropic/OpenAI request payloads via fake clients; pricing; streaming |
+| `test_memory_window.py` | Tool-safe memory trimming, SQLite tool_calls persistence + migration |
 | `conftest.py` | Shared fixtures |
 
 ### Server Tests (`server/tests/`)
