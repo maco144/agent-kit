@@ -47,7 +47,7 @@ class BaseProvider(Protocol):
         """
         ...
 
-    async def stream(
+    def stream(
         self,
         messages: list[Message],
         model: str | None = None,

@@ -173,10 +173,10 @@ class AgentLoop:
                             t0 = time.monotonic()
                             try:
                                 tool = self._registry.get(tc.tool_name)
-                                result = await tool(call_id=tc.call_id, **tc.arguments)
+                                tool_result = await tool(call_id=tc.call_id, **tc.arguments)
                             except Exception as exc:
                                 result_error = str(exc)
-                                result = ToolResult(
+                                tool_result = ToolResult(
                                     call_id=tc.call_id,
                                     tool_name=tc.tool_name,
                                     output=None,
@@ -184,13 +184,13 @@ class AgentLoop:
                                     duration_ms=int((time.monotonic() - t0) * 1000),
                                 )
 
-                            tool_span.set_attribute("duration_ms", result.duration_ms)
-                            tool_span.set_attribute("success", result.error is None)
+                            tool_span.set_attribute("duration_ms", tool_result.duration_ms)
+                            tool_span.set_attribute("success", tool_result.error is None)
 
                             self._tracer.record_tool_call(
                                 tc.tool_name,
-                                result.duration_ms,
-                                result.error is None,
+                                tool_result.duration_ms,
+                                tool_result.error is None,
                             )
 
                         # Audit: tool execution
@@ -200,17 +200,17 @@ class AgentLoop:
                                 actor=tc.tool_name,
                                 payload={
                                     "call_id": tc.call_id,
-                                    "success": result.error is None,
-                                    "error": result.error,
-                                    "duration_ms": result.duration_ms,
+                                    "success": tool_result.error is None,
+                                    "error": tool_result.error,
+                                    "duration_ms": tool_result.duration_ms,
                                 },
                             )
 
                         # Feed tool result back as a tool message
                         output_str = (
-                            json.dumps(result.output, default=str)
-                            if result.output is not None
-                            else f"Error: {result.error}"
+                            json.dumps(tool_result.output, default=str)
+                            if tool_result.output is not None
+                            else f"Error: {tool_result.error}"
                         )
                         self._memory.add(
                             Message(
@@ -219,7 +219,7 @@ class AgentLoop:
                                 tool_call_id=tc.call_id,
                             )
                         )
-                        turn.tool_results.append(result)
+                        turn.tool_results.append(tool_result)
 
                     self._turns.append(turn)
                     if self._reporter:

@@ -12,7 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from app.main import app
-from app.models import AuditEvent, AuditRun, CloudEventLog, Organization
+from app.models import AuditEvent, AuditRun, CloudEventLog
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +281,7 @@ async def test_export_jsonl(client):
     resp = await client.get(f"/v1/audit/runs/{run_id}/export?format=jsonl")
     assert resp.status_code == 200
     assert "application/x-ndjson" in resp.headers["content-type"]
-    lines = [l for l in resp.text.splitlines() if l]
+    lines = [ln for ln in resp.text.splitlines() if ln]
     assert len(lines) == 3
     obj = json.loads(lines[0])
     assert "leaf_hash" in obj

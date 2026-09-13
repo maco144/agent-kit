@@ -5,8 +5,6 @@ from __future__ import annotations
 import gzip
 import json
 import uuid
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import respx
@@ -75,7 +73,7 @@ def test_encode_batch_is_valid_gzip_ndjson():
     ]
     body = _encode_batch(events)
     decompressed = gzip.decompress(body).decode()
-    lines = [l for l in decompressed.splitlines() if l]
+    lines = [ln for ln in decompressed.splitlines() if ln]
     assert len(lines) == 2
     obj = json.loads(lines[0])
     assert obj["event_type"] == "run_start"

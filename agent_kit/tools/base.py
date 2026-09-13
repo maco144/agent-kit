@@ -12,7 +12,7 @@ from typing import Any, Callable
 from agent_kit.types import ToolResult, ToolSchema
 
 
-def _extract_json_schema(fn: Callable) -> dict[str, Any]:
+def _extract_json_schema(fn: Callable[..., Any]) -> dict[str, Any]:
     """
     Build a JSON Schema 'object' description from a function's type hints.
 
@@ -70,7 +70,7 @@ class Tool:
     Use the @tool decorator to create tools — don't instantiate directly.
     """
 
-    def __init__(self, fn: Callable, schema: ToolSchema) -> None:
+    def __init__(self, fn: Callable[..., Any], schema: ToolSchema) -> None:
         self._fn = fn
         self.schema = schema
         self.__name__ = schema.name
@@ -115,7 +115,7 @@ def tool(
     description: str = "",
     cost_estimate: float = 0.0,
     idempotent: bool = False,
-) -> Callable[[Callable], Tool]:
+) -> Callable[[Callable[..., Any]], Tool]:
     """
     Decorator that wraps a sync or async function as an agent Tool.
 
@@ -132,7 +132,7 @@ def tool(
         async def get_stock_price(ticker: str) -> dict:
             ...
     """
-    def decorator(fn: Callable) -> Tool:
+    def decorator(fn: Callable[..., Any]) -> Tool:
         resolved_name = name or fn.__name__
         resolved_desc = description or fn.__doc__ or ""
         schema = ToolSchema(

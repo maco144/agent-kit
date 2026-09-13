@@ -12,6 +12,7 @@ from agent_kit.types import CostSummary, Message, ToolCall, ToolSchema, Turn
 
 try:
     import openai
+    from openai.types.chat import ChatCompletionChunk
 except ImportError as e:
     raise ImportError(
         "The 'openai' package is required for OpenAIProvider. "
@@ -193,14 +194,18 @@ class OpenAIProvider:
         if system and not any(m["role"] == "system" for m in converted):
             converted = [{"role": "system", "content": system}] + converted
 
+        call_kwargs: dict[str, Any] = {
+            "model": resolved_model,
+            "messages": converted,
+            "max_tokens": max_tokens,
+            **kwargs,
+        }
+
         try:
-            async with await self._client.chat.completions.create(
-                model=resolved_model,
-                messages=converted,
-                max_tokens=max_tokens,
-                stream=True,
-                **kwargs,
-            ) as stream:
+            stream: openai.AsyncStream[ChatCompletionChunk] = (
+                await self._client.chat.completions.create(stream=True, **call_kwargs)
+            )
+            async with stream:
                 async for chunk in stream:
                     delta = chunk.choices[0].delta
                     if delta.content:

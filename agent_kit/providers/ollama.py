@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from agent_kit.providers.base import ProviderConfig
 
 # Ollama exposes an OpenAI-compatible /v1 endpoint, so we reuse OpenAIProvider.
 # This module exists so users can write:

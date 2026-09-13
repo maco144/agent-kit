@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from agent_kit.memory.sqlite import SQLiteMemory
 from agent_kit.types import Message

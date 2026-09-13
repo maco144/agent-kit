@@ -9,7 +9,7 @@ from typing import Any
 
 from agent_kit.agent.agent import Agent
 from agent_kit.exceptions import DAGCycleError, DAGMissingDependencyError
-from agent_kit.types import AgentResult, PipelineResult
+from agent_kit.types import AgentResult
 
 
 @dataclass
@@ -166,8 +166,6 @@ class DAGOrchestrator:
         execution_order: list[str] = []
         semaphore = asyncio.Semaphore(self._max_parallel)
 
-        # Track remaining in-degree for each node
-        in_degree = {nid: len(node.depends_on) for nid, node in self._nodes.items()}
         # Event per node — set when that node completes
         events: dict[str, asyncio.Event] = {nid: asyncio.Event() for nid in self._nodes}
 

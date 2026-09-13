@@ -57,7 +57,7 @@ class Span:
     def end(self) -> None:
         duration_ms = int((time.monotonic() - self._start) * 1000)
         if self._backend == "console":
-            record = {
+            record: dict[str, Any] = {
                 "span": self.name,
                 "kind": self.kind.value,
                 "trace_id": self.trace_id,

@@ -40,6 +40,9 @@ async def create_tables():
     yield
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+    # aiosqlite >= 0.22 worker threads are non-daemon; an open StaticPool
+    # connection keeps pytest from exiting.
+    await _engine.dispose()
 
 
 @pytest.fixture

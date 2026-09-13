@@ -6,7 +6,6 @@ import json
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Any
 
 from agent_kit.types import Message
 
@@ -139,7 +138,7 @@ class SQLiteMemory:
 
     def __len__(self) -> int:
         with self._lock:
-            return self._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+            return int(self._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0])
 
     def __bool__(self) -> bool:
         return True

@@ -121,9 +121,7 @@ async def test_agent_max_turns_exceeded(mock_provider_factory):
 @pytest.mark.asyncio
 async def test_circuit_breaker_state_change_logged_to_audit():
     """CB state transitions (CLOSED→OPEN) must appear in the audit chain."""
-    from agent_kit.types import CircuitBreakerConfig
     from agent_kit.providers.base import ProviderConfig
-    from agent_kit.types import CostSummary, Message, Turn
 
     class FailingProvider:
         config = ProviderConfig(default_model="mock")
