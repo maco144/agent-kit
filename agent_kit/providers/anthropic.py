@@ -57,6 +57,9 @@ def _messages_to_anthropic(
     """
     Split off the system message and convert the rest to Anthropic's format.
 
+    Assistant tool calls become ``tool_use`` blocks. Consecutive tool results are
+    merged into one user message, as the API expects for parallel tool use.
+
     Returns (system_text | None, anthropic_messages).
     """
     system_text: str | None = None
@@ -66,19 +69,34 @@ def _messages_to_anthropic(
         if msg.role == "system":
             system_text = msg.content
         elif msg.role == "tool":
-            # Tool result — append as a user message with tool_result content block
-            result.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": msg.tool_call_id,
-                            "content": msg.content,
-                        }
-                    ],
-                }
+            block: dict[str, Any] = {
+                "type": "tool_result",
+                "tool_use_id": msg.tool_call_id,
+                "content": msg.content,
+            }
+            if msg.metadata.get("is_error"):
+                block["is_error"] = True
+            prev = result[-1] if result else None
+            if (
+                prev is not None
+                and prev["role"] == "user"
+                and isinstance(prev["content"], list)
+                and prev["content"][-1].get("type") == "tool_result"
+            ):
+                prev["content"].append(block)
+            else:
+                result.append({"role": "user", "content": [block]})
+        elif msg.role == "assistant" and msg.tool_calls:
+            blocks: list[dict[str, Any]] = []
+            if msg.content:
+                blocks.append({"type": "text", "text": msg.content})
+            blocks.extend(
+                {"type": "tool_use", "id": tc.call_id, "name": tc.tool_name, "input": tc.arguments}
+                for tc in msg.tool_calls
             )
+            result.append({"role": "assistant", "content": blocks})
+        elif msg.role == "assistant" and not msg.content:
+            continue  # the API rejects empty assistant text
         else:
             result.append({"role": msg.role, "content": msg.content})
 
@@ -183,7 +201,7 @@ class AnthropicProvider:
             model=resolved_model,
         )
 
-        assistant_msg = Message(role="assistant", content=" ".join(text_parts))
+        assistant_msg = Message(role="assistant", content=" ".join(text_parts), tool_calls=tool_calls)
         turn = Turn(
             messages_in=messages,
             message_out=assistant_msg,

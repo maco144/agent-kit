@@ -217,6 +217,7 @@ class AgentLoop:
                                 role="tool",
                                 content=output_str,
                                 tool_call_id=tc.call_id,
+                                metadata={"is_error": True} if tool_result.error else {},
                             )
                         )
                         turn.tool_results.append(tool_result)

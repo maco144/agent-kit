@@ -21,12 +21,21 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 
+class ToolCall(BaseModel):
+    """A tool invocation requested by the LLM."""
+
+    tool_name: str
+    arguments: dict[str, Any]
+    call_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+
+
 class Message(BaseModel):
     """A single message in a conversation."""
 
     role: Literal["user", "assistant", "tool", "system"]
     content: str
     tool_call_id: str | None = None
+    tool_calls: list[ToolCall] = Field(default_factory=list)  # assistant turns only
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -43,14 +52,6 @@ class ToolSchema(BaseModel):
     parameters: dict[str, Any]  # JSON Schema object
     cost_estimate: float = 0.0  # advisory USD cost per call
     idempotent: bool = False  # safe to retry without side effects
-
-
-class ToolCall(BaseModel):
-    """A tool invocation requested by the LLM."""
-
-    tool_name: str
-    arguments: dict[str, Any]
-    call_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
 
 
 class ToolResult(BaseModel):
