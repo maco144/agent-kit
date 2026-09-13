@@ -250,10 +250,11 @@ class AnthropicProvider:
         self,
         messages: list[Message],
         model: str | None = None,
+        tools: list[ToolSchema] | None = None,
         system: str | None = None,
         max_tokens: int = 4096,
         **kwargs: Any,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[str | Turn]:
         resolved_model = model or self.config.default_model
         sys_from_messages, converted = _messages_to_anthropic(messages)
         resolved_system = system or sys_from_messages
@@ -266,10 +267,18 @@ class AnthropicProvider:
         }
         if resolved_system:
             call_kwargs["system"] = resolved_system
+        if tools:
+            call_kwargs["tools"] = _to_anthropic_tools(tools)
 
+        t0 = time.monotonic()
         try:
             async with self._client.messages.stream(**call_kwargs) as stream:
                 async for text in stream.text_stream:
                     yield text
+                final = await stream.get_final_message()
         except anthropic.APIError as exc:
             raise ProviderError(f"Anthropic stream error: {exc}") from exc
+
+        yield _turn_from_response(
+            final, messages, resolved_model, int((time.monotonic() - t0) * 1000)
+        )

@@ -285,3 +285,117 @@ async def test_anthropic_turn_cost_includes_cache_usage():
     assert cost.cost_usd == pytest.approx(
         (100 * 5 + 10 * 25 + 1000 * 5 * 0.1 + 200 * 5 * 1.25) / 1_000_000
     )
+
+
+# ---------------------------------------------------------------------------
+# Streaming
+# ---------------------------------------------------------------------------
+
+
+class FakeAnthropicStream:
+    def __init__(self, chunks: list[str], final: NS) -> None:
+        self._chunks = chunks
+        self._final = final
+
+    async def __aenter__(self) -> FakeAnthropicStream:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    @property
+    def text_stream(self) -> Any:
+        async def gen() -> Any:
+            for c in self._chunks:
+                yield c
+
+        return gen()
+
+    async def get_final_message(self) -> NS:
+        return self._final
+
+
+async def test_anthropic_stream_runs_tools_through_loop():
+    provider = AnthropicProvider(api_key="test", default_model="claude-opus-5")
+    streams = [
+        FakeAnthropicStream(
+            ["Checking."],
+            anthropic_response(
+                [text_block("Checking."), tool_use_block("toolu_1", "get_weather", {"city": "Paris"})],
+                "tool_use",
+            ),
+        ),
+        FakeAnthropicStream(["21C ", "in Paris"], anthropic_response([text_block("21C in Paris")])),
+    ]
+    stream_calls: list[dict[str, Any]] = []
+
+    def fake_stream(**kwargs: Any) -> FakeAnthropicStream:
+        stream_calls.append(kwargs)
+        return streams.pop(0)
+
+    provider._client = NS(messages=NS(stream=fake_stream))  # type: ignore[assignment]
+    agent = Agent(provider, tools=[get_weather])
+
+    chunks = [c async for c in agent.stream("weather in Paris?")]
+
+    assert "".join(chunks) == "Checking.21C in Paris"
+    assert stream_calls[0]["tools"][0]["name"] == "get_weather"
+    assert stream_calls[1]["messages"][1]["content"][1]["type"] == "tool_use"
+    assert agent.last_result is not None
+    assert agent.last_result.output == "21C in Paris"
+    assert agent.last_result.total_cost_usd > 0
+
+
+def openai_chunk(
+    content: str | None = None, tool_calls: list[NS] | None = None, usage: NS | None = None
+) -> NS:
+    choices = [] if usage else [NS(delta=NS(content=content, tool_calls=tool_calls))]
+    return NS(choices=choices, usage=usage)
+
+
+class FakeOpenAIStream:
+    def __init__(self, chunks: list[NS]) -> None:
+        self._chunks = chunks
+
+    async def __aenter__(self) -> FakeOpenAIStream:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    def __aiter__(self) -> Any:
+        async def gen() -> Any:
+            for c in self._chunks:
+                yield c
+
+        return gen()
+
+
+@requires_openai
+async def test_openai_stream_assembles_tool_call_deltas():
+    first = FakeOpenAIStream(
+        [
+            openai_chunk(
+                tool_calls=[NS(index=0, id="call_1", function=NS(name="get_weather", arguments='{"ci'))]
+            ),
+            openai_chunk(tool_calls=[NS(index=0, id=None, function=NS(name=None, arguments='ty": "Paris"}'))]),
+            openai_chunk(usage=NS(prompt_tokens=10, completion_tokens=5)),
+        ]
+    )
+    second = FakeOpenAIStream(
+        [
+            openai_chunk("21C "),
+            openai_chunk("in Paris"),
+            openai_chunk(usage=NS(prompt_tokens=20, completion_tokens=4)),
+        ]
+    )
+    agent, fake = openai_agent([first, second], tools=[get_weather])
+
+    chunks = [c async for c in agent.stream("weather in Paris?")]
+
+    assert "".join(chunks) == "21C in Paris"
+    assert fake.calls[0]["stream"] is True
+    assert fake.calls[0]["stream_options"] == {"include_usage": True}
+    assert fake.calls[1]["messages"][1]["tool_calls"][0]["function"]["arguments"] == '{"city": "Paris"}'
+    assert agent.last_result is not None
+    assert agent.last_result.total_tokens == 39

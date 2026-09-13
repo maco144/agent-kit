@@ -51,11 +51,18 @@ class BaseProvider(Protocol):
         self,
         messages: list[Message],
         model: str | None = None,
+        tools: list[ToolSchema] | None = None,
         system: str | None = None,
         max_tokens: int = 4096,
         **kwargs: Any,
-    ) -> AsyncIterator[str]:
-        """Yield text chunks as they arrive from the provider."""
+    ) -> AsyncIterator[str | Turn]:
+        """
+        Yield text chunks as they arrive, then optionally one final Turn.
+
+        The final Turn carries tool calls and cost, exactly as complete() would
+        return. Providers that yield only text still work; AgentLoop builds a
+        text-only Turn from the chunks.
+        """
         ...
 
     def name(self) -> str:

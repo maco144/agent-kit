@@ -202,10 +202,11 @@ class OpenAIProvider:
         self,
         messages: list[Message],
         model: str | None = None,
+        tools: list[ToolSchema] | None = None,
         system: str | None = None,
         max_tokens: int = 4096,
         **kwargs: Any,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[str | Turn]:
         resolved_model = model or self.config.default_model
         converted = _messages_to_openai(messages)
 
@@ -216,17 +217,61 @@ class OpenAIProvider:
             "model": resolved_model,
             "messages": converted,
             "max_tokens": max_tokens,
+            "stream_options": {"include_usage": True},
             **kwargs,
         }
+        if tools:
+            call_kwargs["tools"] = _to_openai_tools(tools)
+            call_kwargs["tool_choice"] = "auto"
 
+        text_parts: list[str] = []
+        pending: dict[int, dict[str, str]] = {}  # tool-call deltas by index
+        input_tokens = output_tokens = 0
+        t0 = time.monotonic()
         try:
             stream: openai.AsyncStream[ChatCompletionChunk] = (
                 await self._client.chat.completions.create(stream=True, **call_kwargs)
             )
             async with stream:
                 async for chunk in stream:
+                    if chunk.usage:
+                        input_tokens = chunk.usage.prompt_tokens
+                        output_tokens = chunk.usage.completion_tokens
+                    if not chunk.choices:
+                        continue
                     delta = chunk.choices[0].delta
                     if delta.content:
+                        text_parts.append(delta.content)
                         yield delta.content
+                    for tc in delta.tool_calls or []:
+                        slot = pending.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
+                        if tc.id:
+                            slot["id"] = tc.id
+                        if tc.function and tc.function.name:
+                            slot["name"] += tc.function.name
+                        if tc.function and tc.function.arguments:
+                            slot["arguments"] += tc.function.arguments
         except openai.APIError as exc:
             raise ProviderError(f"OpenAI stream error: {exc}") from exc
+
+        tool_calls = [
+            ToolCall(
+                tool_name=slot["name"],
+                arguments=json.loads(slot["arguments"] or "{}"),
+                call_id=slot["id"],
+            )
+            for _, slot in sorted(pending.items())
+        ]
+        yield Turn(
+            messages_in=messages,
+            message_out=Message(role="assistant", content="".join(text_parts), tool_calls=tool_calls),
+            tool_calls=tool_calls,
+            cost=CostSummary(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=input_tokens + output_tokens,
+                cost_usd=_estimate_cost(resolved_model, input_tokens, output_tokens),
+                model=resolved_model,
+            ),
+            duration_ms=int((time.monotonic() - t0) * 1000),
+        )

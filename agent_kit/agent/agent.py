@@ -14,7 +14,6 @@ from agent_kit.tools.registry import ToolRegistry
 from agent_kit.types import (
     AgentResult,
     CircuitBreakerConfig,
-    Message,
     RetryPolicyConfig,
 )
 
@@ -109,6 +108,7 @@ class Agent:
         )
         self._tracer = self._config.tracer or AgentTracer()
         self._audit: AuditChain | None = AuditChain() if self._config.audit_enabled else None
+        self.last_result: AgentResult | None = None
 
     def add_tool(self, t: Tool) -> "Agent":
         """Register a tool and return self for fluent chaining."""
@@ -127,7 +127,26 @@ class Agent:
             CircuitOpenError: if the provider circuit breaker is OPEN
             ProviderError: if the LLM call fails and retries are exhausted
         """
-        loop = AgentLoop(
+        self.last_result = await self._make_loop().run(prompt, **context)
+        return self.last_result
+
+    async def stream(self, prompt: str, **context: Any) -> AsyncIterator[str]:
+        """
+        Stream the agent's response as text chunks.
+
+        Runs the same loop as run(): tools execute between turns, and retry,
+        circuit breaking, audit, and cloud reporting all apply. Retry covers
+        opening each provider stream; a failure mid-stream propagates. The
+        completed AgentResult is available as ``agent.last_result`` once the
+        iterator is exhausted.
+        """
+        loop = self._make_loop()
+        async for chunk in loop.stream(prompt, **context):
+            yield chunk
+        self.last_result = loop.result
+
+    def _make_loop(self) -> AgentLoop:
+        return AgentLoop(
             provider=self._provider,
             registry=self._registry,
             memory=self._memory,
@@ -141,24 +160,6 @@ class Agent:
             circuit_breaker_config=self._config.circuit_breaker,
             reporter=self._config.cloud,
         )
-        return await loop.run(prompt, **context)
-
-    async def stream(self, prompt: str) -> AsyncIterator[str]:
-        """
-        Stream the agent's response token by token.
-
-        Note: streaming mode does not support tool calls in v0.1.
-        For tool-using agents, use run() instead.
-        """
-        self._memory.add(Message(role="user", content=prompt))
-        messages = self._memory.history(include_system=False)
-        async for chunk in self._provider.stream(
-            messages,
-            model=self._config.model,
-            system=self._config.system_prompt or None,
-            max_tokens=self._config.max_tokens_per_turn,
-        ):
-            yield chunk
 
     @property
     def audit(self) -> AuditChain | None:

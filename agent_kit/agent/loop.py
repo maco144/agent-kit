@@ -6,7 +6,7 @@ import asyncio
 import json
 import time
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from agent_kit.audit.chain import AuditChain
 from agent_kit.exceptions import MaxTurnsExceededError
@@ -19,11 +19,13 @@ from agent_kit.tools.registry import ToolRegistry
 from agent_kit.types import (
     AgentResult,
     CircuitBreakerConfig,
+    CostSummary,
     Message,
     RetryPolicyConfig,
     SpanKind,
     ToolCall,
     ToolResult,
+    ToolSchema,
     Turn,
 )
 
@@ -78,9 +80,24 @@ class AgentLoop:
         )
         self._reporter = reporter
         self._turns: list[Turn] = []
+        self.result: AgentResult | None = None
 
     async def run(self, prompt: str, **context: Any) -> AgentResult:
         """Execute the agent loop and return the final result."""
+        async for _ in self._execute(prompt, streaming=False, context=context):
+            pass
+        assert self.result is not None
+        return self.result
+
+    async def stream(self, prompt: str, **context: Any) -> AsyncIterator[str]:
+        """Execute the agent loop, yielding text as it streams. ``self.result`` is set at the end."""
+        async for chunk in self._execute(prompt, streaming=True, context=context):
+            yield chunk
+
+    async def _execute(
+        self, prompt: str, streaming: bool, context: dict[str, Any]
+    ) -> AsyncIterator[str]:
+        """The agent loop. Yields text chunks when ``streaming``; sets ``self.result`` on success."""
         run_id = str(uuid.uuid4())
 
         if self._reporter:
@@ -118,17 +135,46 @@ class AgentLoop:
                         turn=turn_count,
                         model=self._model or self._provider.config.default_model,
                     ) as llm_span:
-                        turn: Turn = await with_retry(
-                            self._cb_call,
-                            self._retry_policy,
-                            run_id,
-                            self._provider.complete,
-                            messages,
-                            model=self._model,
-                            tools=tool_schemas if tool_schemas else None,
-                            system=self._system_prompt or None,
-                            max_tokens=self._max_tokens_per_turn,
-                        )
+                        turn: Turn | None = None
+                        if streaming:
+                            # Retry and circuit breaking cover opening the stream. A failure
+                            # after text has been yielded propagates: replaying would duplicate it.
+                            it, item = await with_retry(
+                                self._cb_call,
+                                self._retry_policy,
+                                run_id,
+                                self._open_stream,
+                                messages,
+                                tool_schemas or None,
+                            )
+                            chunks: list[str] = []
+                            while item is not None:
+                                if isinstance(item, Turn):
+                                    turn = item
+                                else:
+                                    chunks.append(item)
+                                    yield item
+                                item = await anext(it, None)
+                            if turn is None:  # provider streams text only
+                                turn = Turn(
+                                    messages_in=messages,
+                                    message_out=Message(role="assistant", content="".join(chunks)),
+                                    cost=CostSummary(
+                                        model=self._model or self._provider.config.default_model
+                                    ),
+                                )
+                        else:
+                            turn = await with_retry(
+                                self._cb_call,
+                                self._retry_policy,
+                                run_id,
+                                self._provider.complete,
+                                messages,
+                                model=self._model,
+                                tools=tool_schemas if tool_schemas else None,
+                                system=self._system_prompt or None,
+                                max_tokens=self._max_tokens_per_turn,
+                            )
                         llm_span.set_attribute("input_tokens", turn.cost.input_tokens)
                         llm_span.set_attribute("output_tokens", turn.cost.output_tokens)
                         llm_span.set_attribute("cost_usd", turn.cost.cost_usd)
@@ -244,7 +290,20 @@ class AgentLoop:
                     final_root_hash=self._audit.root_hash(),
                 )
 
-        return result
+        self.result = result
+
+    async def _open_stream(
+        self, messages: list[Message], tools: list[ToolSchema] | None
+    ) -> tuple[AsyncIterator[str | Turn], str | Turn | None]:
+        """Start a provider stream and pull its first item, so connection failures are retryable."""
+        it = self._provider.stream(
+            messages,
+            model=self._model,
+            tools=tools,
+            system=self._system_prompt or None,
+            max_tokens=self._max_tokens_per_turn,
+        ).__aiter__()
+        return it, await anext(it, None)
 
     async def _run_tool(self, tc: ToolCall) -> ToolResult:
         """Execute one tool call inside its span. Never raises — failures become ToolResult.error."""

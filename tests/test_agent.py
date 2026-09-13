@@ -240,3 +240,73 @@ async def test_sync_tools_run_off_the_event_loop():
 
     assert result.output == "ok"
     assert seen and seen[0] != loop_thread
+
+
+async def test_stream_executes_tools_and_records_result():
+    from agent_kit.providers.base import ProviderConfig
+    from agent_kit.types import CostSummary, Message, ToolCall, Turn
+
+    calls_made: list[str] = []
+
+    @tool(description="records a call")
+    def lookup(key: str) -> str:
+        calls_made.append(key)
+        return f"value-{key}"
+
+    class StreamingToolProvider:
+        config = ProviderConfig(default_model="mock")
+        step = 0
+
+        def name(self) -> str:
+            return "mock"
+
+        async def complete(self, messages, **kw):
+            raise AssertionError("stream() must not fall back to complete()")
+
+        async def stream(self, messages, model=None, tools=None, system=None, max_tokens=4096, **kw):
+            self.step += 1
+            if self.step == 1:
+                assert tools, "tools must be offered while streaming"
+                yield "Looking up. "
+                call = ToolCall(tool_name="lookup", arguments={"key": "k1"}, call_id="c1")
+                yield Turn(
+                    message_out=Message(role="assistant", content="Looking up. ", tool_calls=[call]),
+                    tool_calls=[call],
+                    cost=CostSummary(total_tokens=3, cost_usd=0.001),
+                )
+            else:
+                assert messages[-1].role == "tool" and messages[-1].content == '"value-k1"'
+                yield "Found "
+                yield "value-k1."
+                yield Turn(
+                    message_out=Message(role="assistant", content="Found value-k1."),
+                    cost=CostSummary(total_tokens=2, cost_usd=0.001),
+                )
+
+    agent = Agent(StreamingToolProvider(), tools=[lookup])
+    chunks = [c async for c in agent.stream("find k1")]
+
+    assert "".join(chunks) == "Looking up. Found value-k1."
+    assert calls_made == ["k1"]
+    assert agent.last_result is not None
+    assert agent.last_result.output == "Found value-k1."
+    assert len(agent.last_result.turns) == 2
+    assert agent.last_result.total_tokens == 5
+    assert agent.audit is not None
+    assert {e.event_type for e in agent.audit.events()} >= {"agent_start", "tool_call", "agent_complete"}
+    assert agent.memory.history()[-1].content == "Found value-k1."
+
+
+async def test_stream_accepts_text_only_providers(mock_provider_factory):
+    agent = Agent(mock_provider_factory(["hello streaming world"]))
+    chunks = [c async for c in agent.stream("hi")]
+    assert "".join(chunks) == "hello streaming world "
+    assert agent.last_result is not None
+    assert agent.last_result.output == "hello streaming world "
+    assert agent.memory.history()[-1].content == "hello streaming world "
+
+
+async def test_run_sets_last_result(mock_provider):
+    agent = Agent(mock_provider)
+    result = await agent.run("hi")
+    assert agent.last_result is result
