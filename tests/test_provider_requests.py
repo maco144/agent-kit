@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 from types import SimpleNamespace as NS
 from typing import Any
 
 import pytest
 
 from agent_kit import Agent, tool
+from agent_kit.providers import anthropic as anthropic_provider
 from agent_kit.providers.anthropic import AnthropicProvider
 
 
@@ -211,3 +213,75 @@ async def test_openai_tool_calls_round_trip_into_next_request():
         },
         {"role": "tool", "tool_call_id": "call_1", "content": '{"city": "Paris", "temp_c": 21}'},
     ]
+
+
+# ---------------------------------------------------------------------------
+# Pricing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("model", "input_tokens", "output_tokens", "usd"),
+    [
+        ("claude-opus-5", 1_000_000, 1_000_000, 30.0),
+        ("claude-opus-4-8", 1_000_000, 0, 5.0),
+        ("claude-opus-4-1", 1_000_000, 0, 15.0),
+        ("claude-sonnet-5", 0, 1_000_000, 10.0),
+        ("claude-sonnet-4-6", 1_000_000, 0, 3.0),
+        ("claude-haiku-4-5", 1_000_000, 0, 1.0),
+        ("claude-fable-5-1", 0, 1_000_000, 50.0),
+    ],
+)
+def test_anthropic_pricing_current_models(model, input_tokens, output_tokens, usd):
+    assert anthropic_provider._estimate_cost(model, input_tokens, output_tokens) == pytest.approx(usd)
+
+
+def test_anthropic_pricing_cache_tokens():
+    # Opus 5: $5 input. Reads bill 0.1x, 5-minute writes 1.25x.
+    assert anthropic_provider._estimate_cost(
+        "claude-opus-5", 0, 0, cache_read_tokens=1_000_000, cache_write_tokens=1_000_000
+    ) == pytest.approx(0.5 + 6.25)
+    # Fable 5.1 cache reads are $0.25/MTok (0.025x).
+    assert anthropic_provider._estimate_cost(
+        "claude-fable-5-1", 0, 0, cache_read_tokens=1_000_000
+    ) == pytest.approx(0.25)
+
+
+def test_unknown_model_warns_once_and_costs_zero(caplog):
+    with caplog.at_level(logging.WARNING, logger="agent_kit.providers"):
+        assert anthropic_provider._estimate_cost("claude-future-9", 1000, 1000) == 0.0
+        assert anthropic_provider._estimate_cost("claude-future-9", 1000, 1000) == 0.0
+    assert caplog.text.count("claude-future-9") == 1
+
+
+@requires_openai
+def test_openai_longest_prefix_pricing():
+    from agent_kit.providers import openai as openai_provider
+
+    assert openai_provider._estimate_cost("gpt-4o-mini", 1_000_000, 0) == pytest.approx(0.15)
+    assert openai_provider._estimate_cost("gpt-4o-2024-08-06", 1_000_000, 0) == pytest.approx(2.5)
+
+
+async def test_anthropic_turn_cost_includes_cache_usage():
+    agent, _ = anthropic_agent(
+        [
+            anthropic_response(
+                [text_block("hi")],
+                input_tokens=100,
+                output_tokens=10,
+                cache_read_input_tokens=1000,
+                cache_creation_input_tokens=200,
+            )
+        ],
+        tools=[],
+    )
+    agent._provider.config.default_model = "claude-opus-5"  # type: ignore[attr-defined]
+
+    result = await agent.run("hi")
+
+    cost = result.turns[0].cost
+    assert (cost.input_tokens, cost.cache_read_tokens, cost.cache_write_tokens) == (100, 1000, 200)
+    assert cost.total_tokens == 1310
+    assert cost.cost_usd == pytest.approx(
+        (100 * 5 + 10 * 25 + 1000 * 5 * 0.1 + 200 * 5 * 1.25) / 1_000_000
+    )

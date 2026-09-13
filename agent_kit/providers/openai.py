@@ -8,6 +8,7 @@ from typing import Any, AsyncIterator
 
 from agent_kit.exceptions import ProviderError
 from agent_kit.providers.base import ProviderConfig
+from agent_kit.providers.pricing import lookup_rates
 from agent_kit.types import CostSummary, Message, ToolCall, ToolSchema, Turn
 
 try:
@@ -21,6 +22,7 @@ except ImportError as e:
 
 _COST_TABLE: dict[str, tuple[float, float]] = {
     "gpt-4o":        (2.50, 10.00),
+    "gpt-4o-mini":   (0.15, 0.60),
     "gpt-4-turbo":   (10.00, 30.00),
     "gpt-4":         (30.00, 60.00),
     "gpt-3.5-turbo": (0.50, 1.50),
@@ -32,10 +34,11 @@ _DEFAULT_MODEL = "gpt-4o"
 
 
 def _estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    for prefix, (in_rate, out_rate) in _COST_TABLE.items():
-        if model.startswith(prefix):
-            return (input_tokens * in_rate + output_tokens * out_rate) / 1_000_000
-    return 0.0
+    rates = lookup_rates(_COST_TABLE, model)
+    if rates is None:
+        return 0.0
+    in_rate, out_rate = rates
+    return (input_tokens * in_rate + output_tokens * out_rate) / 1_000_000
 
 
 def _to_openai_tools(schemas: list[ToolSchema]) -> list[dict[str, Any]]:
