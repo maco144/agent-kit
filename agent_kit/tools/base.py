@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import time
@@ -83,7 +84,7 @@ class Tool:
             if inspect.iscoroutinefunction(self._fn):
                 output = await self._fn(**kwargs)
             else:
-                output = self._fn(**kwargs)
+                output = await asyncio.to_thread(self._fn, **kwargs)
 
             # Ensure output is JSON-serialisable for safe embedding in messages
             try:

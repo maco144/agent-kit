@@ -173,3 +173,70 @@ async def test_agent_memory_persists_across_runs(mock_provider_factory):
     contents = [m.content for m in history]
     assert "Turn 1" in contents
     assert "Turn 2" in contents
+
+
+async def test_tool_calls_in_one_turn_run_concurrently():
+    import asyncio
+
+    from agent_kit.providers.base import ProviderConfig
+    from agent_kit.types import CostSummary, Message, ToolCall, Turn
+
+    both_started = asyncio.Event()
+    started: list[str] = []
+
+    @tool(description="waits for its sibling")
+    async def wait_for_sibling(name: str) -> str:
+        started.append(name)
+        if len(started) == 2:
+            both_started.set()
+        await asyncio.wait_for(both_started.wait(), timeout=1.0)
+        return name
+
+    class TwoCallProvider:
+        config = ProviderConfig(default_model="mock")
+        step = 0
+
+        def name(self) -> str:
+            return "mock"
+
+        async def complete(self, messages, **kw):
+            self.step += 1
+            if self.step == 1:
+                calls = [
+                    ToolCall(tool_name="wait_for_sibling", arguments={"name": n}, call_id=n)
+                    for n in ("a", "b")
+                ]
+                return Turn(
+                    message_out=Message(role="assistant", content="", tool_calls=calls),
+                    tool_calls=calls,
+                    cost=CostSummary(),
+                )
+            return Turn(message_out=Message(role="assistant", content="done"), cost=CostSummary())
+
+        async def stream(self, *a, **kw):
+            yield ""
+
+    result = await Agent(TwoCallProvider(), tools=[wait_for_sibling]).run("go")
+
+    assert result.output == "done"
+    assert [r.output for r in result.turns[0].tool_results] == ["a", "b"]
+    assert all(r.error is None for r in result.turns[0].tool_results)
+
+
+async def test_sync_tools_run_off_the_event_loop():
+    import asyncio
+    import threading
+
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+
+    @tool(description="records its thread")
+    def which_thread() -> str:
+        seen.append(threading.get_ident())
+        return "ok"
+
+    result = await which_thread(call_id="t")
+    await asyncio.sleep(0)
+
+    assert result.output == "ok"
+    assert seen and seen[0] != loop_thread

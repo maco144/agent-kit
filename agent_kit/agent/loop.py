@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -21,6 +22,7 @@ from agent_kit.types import (
     Message,
     RetryPolicyConfig,
     SpanKind,
+    ToolCall,
     ToolResult,
     Turn,
 )
@@ -163,36 +165,11 @@ class AgentLoop:
                             await self._reporter.on_turn_complete(run_id, turn, len(self._turns) - 1)
                         break
 
-                    # --- Execute tool calls ---
-                    for tc in turn.tool_calls:
-                        with self._tracer.span(
-                            f"tool.{tc.tool_name}",
-                            kind=SpanKind.TOOL,
-                            tool=tc.tool_name,
-                        ) as tool_span:
-                            t0 = time.monotonic()
-                            try:
-                                tool = self._registry.get(tc.tool_name)
-                                tool_result = await tool(call_id=tc.call_id, **tc.arguments)
-                            except Exception as exc:
-                                result_error = str(exc)
-                                tool_result = ToolResult(
-                                    call_id=tc.call_id,
-                                    tool_name=tc.tool_name,
-                                    output=None,
-                                    error=result_error,
-                                    duration_ms=int((time.monotonic() - t0) * 1000),
-                                )
-
-                            tool_span.set_attribute("duration_ms", tool_result.duration_ms)
-                            tool_span.set_attribute("success", tool_result.error is None)
-
-                            self._tracer.record_tool_call(
-                                tc.tool_name,
-                                tool_result.duration_ms,
-                                tool_result.error is None,
-                            )
-
+                    # --- Execute tool calls concurrently; record results in call order ---
+                    tool_results = await asyncio.gather(
+                        *(self._run_tool(tc) for tc in turn.tool_calls)
+                    )
+                    for tc, tool_result in zip(turn.tool_calls, tool_results):
                         # Audit: tool execution
                         if self._audit:
                             self._audit.append(
@@ -268,6 +245,36 @@ class AgentLoop:
                 )
 
         return result
+
+    async def _run_tool(self, tc: ToolCall) -> ToolResult:
+        """Execute one tool call inside its span. Never raises — failures become ToolResult.error."""
+        with self._tracer.span(
+            f"tool.{tc.tool_name}",
+            kind=SpanKind.TOOL,
+            tool=tc.tool_name,
+        ) as tool_span:
+            t0 = time.monotonic()
+            try:
+                tool = self._registry.get(tc.tool_name)
+                tool_result = await tool(call_id=tc.call_id, **tc.arguments)
+            except Exception as exc:
+                tool_result = ToolResult(
+                    call_id=tc.call_id,
+                    tool_name=tc.tool_name,
+                    output=None,
+                    error=str(exc),
+                    duration_ms=int((time.monotonic() - t0) * 1000),
+                )
+
+            tool_span.set_attribute("duration_ms", tool_result.duration_ms)
+            tool_span.set_attribute("success", tool_result.error is None)
+
+        self._tracer.record_tool_call(
+            tc.tool_name,
+            tool_result.duration_ms,
+            tool_result.error is None,
+        )
+        return tool_result
 
     async def _cb_call(
         self, run_id: str, fn: Any, *args: Any, **kwargs: Any
