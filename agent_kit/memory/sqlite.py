@@ -7,7 +7,8 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from agent_kit.types import Message
+from agent_kit.memory.window import window_indices
+from agent_kit.types import Message, ToolCall
 
 
 class SQLiteMemory:
@@ -48,45 +49,53 @@ class SQLiteMemory:
                     role    TEXT    NOT NULL,
                     content TEXT    NOT NULL,
                     tool_call_id TEXT,
-                    metadata TEXT   NOT NULL DEFAULT '{}'
+                    metadata TEXT   NOT NULL DEFAULT '{}',
+                    tool_calls TEXT NOT NULL DEFAULT '[]'
                 )
             """)
+            columns = {row[1] for row in self._conn.execute("PRAGMA table_info(messages)")}
+            if "tool_calls" not in columns:  # databases created before tool_calls existed
+                self._conn.execute(
+                    "ALTER TABLE messages ADD COLUMN tool_calls TEXT NOT NULL DEFAULT '[]'"
+                )
+
+    _INSERT = (
+        "INSERT INTO messages (role, content, tool_call_id, metadata, tool_calls) "
+        "VALUES (?,?,?,?,?)"
+    )
+
+    @staticmethod
+    def _row(m: Message) -> tuple[str, str, str | None, str, str]:
+        return (
+            m.role,
+            m.content,
+            m.tool_call_id,
+            json.dumps(m.metadata),
+            json.dumps([tc.model_dump() for tc in m.tool_calls]),
+        )
 
     def add(self, message: Message) -> None:
         with self._lock:
             with self._conn:
-                self._conn.execute(
-                    "INSERT INTO messages (role, content, tool_call_id, metadata) VALUES (?,?,?,?)",
-                    (
-                        message.role,
-                        message.content,
-                        message.tool_call_id,
-                        json.dumps(message.metadata),
-                    ),
-                )
+                self._conn.execute(self._INSERT, self._row(message))
             self._trim()
 
     def add_many(self, messages: list[Message]) -> None:
         with self._lock:
             with self._conn:
-                self._conn.executemany(
-                    "INSERT INTO messages (role, content, tool_call_id, metadata) VALUES (?,?,?,?)",
-                    [
-                        (m.role, m.content, m.tool_call_id, json.dumps(m.metadata))
-                        for m in messages
-                    ],
-                )
+                self._conn.executemany(self._INSERT, [self._row(m) for m in messages])
             self._trim()
 
     def history(self, include_system: bool = True) -> list[Message]:
         with self._lock:
             if include_system:
                 rows = self._conn.execute(
-                    "SELECT role, content, tool_call_id, metadata FROM messages ORDER BY id"
+                    "SELECT role, content, tool_call_id, metadata, tool_calls FROM messages "
+                    "ORDER BY id"
                 ).fetchall()
             else:
                 rows = self._conn.execute(
-                    "SELECT role, content, tool_call_id, metadata FROM messages "
+                    "SELECT role, content, tool_call_id, metadata, tool_calls FROM messages "
                     "WHERE role != 'system' ORDER BY id"
                 ).fetchall()
             return [
@@ -94,6 +103,7 @@ class SQLiteMemory:
                     role=row["role"],
                     content=row["content"],
                     tool_call_id=row["tool_call_id"],
+                    tool_calls=[ToolCall(**tc) for tc in json.loads(row["tool_calls"])],
                     metadata=json.loads(row["metadata"]),
                 )
                 for row in rows
@@ -105,7 +115,7 @@ class SQLiteMemory:
                 self._conn.execute("DELETE FROM messages")
 
     def _trim(self) -> None:
-        """Drop oldest non-system messages when window is exceeded."""
+        """Drop oldest non-system messages when window is exceeded, never orphaning tool results."""
         total = self._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
         if total <= self._window:
             return
@@ -113,28 +123,17 @@ class SQLiteMemory:
         system_count = self._conn.execute(
             "SELECT COUNT(*) FROM messages WHERE role = 'system'"
         ).fetchone()[0]
+        keep = max(0, self._window - system_count)
 
-        keep_non_system = max(0, self._window - system_count)
-
-        # Get IDs of non-system messages to keep (most recent N)
-        keep_ids = [
-            row[0]
-            for row in self._conn.execute(
-                "SELECT id FROM messages WHERE role != 'system' ORDER BY id DESC LIMIT ?",
-                (keep_non_system,),
-            ).fetchall()
-        ]
-
-        if keep_ids:
-            placeholders = ",".join("?" * len(keep_ids))
+        rows = self._conn.execute(
+            "SELECT id, role FROM messages WHERE role != 'system' ORDER BY id"
+        ).fetchall()
+        kept = set(window_indices([row[1] for row in rows], keep))
+        drop_ids = [row[0] for i, row in enumerate(rows) if i not in kept]
+        if drop_ids:
+            placeholders = ",".join("?" * len(drop_ids))
             with self._conn:
-                self._conn.execute(
-                    f"DELETE FROM messages WHERE role != 'system' AND id NOT IN ({placeholders})",
-                    keep_ids,
-                )
-        else:
-            with self._conn:
-                self._conn.execute("DELETE FROM messages WHERE role != 'system'")
+                self._conn.execute(f"DELETE FROM messages WHERE id IN ({placeholders})", drop_ids)
 
     def __len__(self) -> int:
         with self._lock:

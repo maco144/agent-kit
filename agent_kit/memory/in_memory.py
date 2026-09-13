@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from agent_kit.memory.window import window_indices
 from agent_kit.types import Message
 
 
@@ -9,8 +10,9 @@ class InMemoryStore:
     """
     Simple in-process conversation memory with a configurable window.
 
-    When the window is exceeded, the oldest non-system messages are dropped.
-    System messages are always preserved.
+    When the window is exceeded, the oldest non-system messages are dropped,
+    never separating a tool call from its results. System messages are always
+    preserved.
 
     Usage::
 
@@ -42,13 +44,12 @@ class InMemoryStore:
     def _trim(self) -> None:
         if len(self._messages) <= self._window:
             return
-        # Keep all system messages; drop oldest non-system
+        # Keep all system messages; trim non-system without orphaning tool results
         system = [m for m in self._messages if m.role == "system"]
         non_system = [m for m in self._messages if m.role != "system"]
-        # Keep most recent (window - len(system)) non-system messages
         keep = max(0, self._window - len(system))
-        trimmed = system + non_system[-keep:] if keep > 0 else system
-        self._messages = trimmed
+        kept = window_indices([m.role for m in non_system], keep)
+        self._messages = system + [non_system[i] for i in kept]
 
     def __len__(self) -> int:
         return len(self._messages)
