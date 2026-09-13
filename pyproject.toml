@@ -34,7 +34,7 @@ dev     = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
     "respx>=0.21",
-    "ruff>=0.4",
+    "ruff>=0.15,<0.17",
     "mypy>=1.9",
 ]
 
@@ -54,6 +54,11 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+# Explicit rule set: ruff 0.16 widened its defaults, so an unpinned select
+# lets a new ruff release fail CI with no code change.
+select = ["E4", "E7", "E9", "F"]
 
 [tool.mypy]
 python_version = "3.11"
