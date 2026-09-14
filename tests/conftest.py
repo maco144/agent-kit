@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any, AsyncIterator
 
 import pytest
 
+from agent_kit.cloud.models import CloudEvent
+from agent_kit.cloud.reporter import CloudReporter
 from agent_kit.providers.base import ProviderConfig
 from agent_kit.types import CostSummary, Message, Turn
 
@@ -71,3 +74,48 @@ def mock_provider_factory():
     def factory(responses: list[str]) -> MockProvider:
         return MockProvider(responses)
     return factory
+
+
+
+
+class CloudCapture:
+    """Collects CloudEvents a reporter would send; verifies flushed audit chains."""
+
+    def __init__(self, reporter: CloudReporter) -> None:
+        self.reporter = reporter
+        self.events: list[CloudEvent] = []
+
+    def types(self) -> list[str]:
+        return [e.event_type.value for e in self.events]
+
+    def of(self, event_type: str) -> list[CloudEvent]:
+        return [e for e in self.events if e.event_type.value == event_type]
+
+    def flush_payload(self, run_id: str) -> dict[str, Any]:
+        (flush,) = [e for e in self.of("audit_flush") if e.run_id == run_id]
+        return flush.payload
+
+    def audit_types(self, run_id: str) -> list[str]:
+        return [e["event_type"] for e in self.flush_payload(run_id)["events"]]
+
+    def assert_chain_intact(self, run_id: str) -> None:
+        """Re-derive every link exactly as server/app/audit_chain.py does."""
+        payload = self.flush_payload(run_id)
+        root = "0" * 64
+        for e in payload["events"]:
+            expected = hashlib.sha256(
+                (root + e["event_type"] + e["payload_hash"] + e["timestamp"]).encode()
+            ).hexdigest()
+            assert e["prev_root"] == root
+            assert e["leaf_hash"] == expected
+            root = e["leaf_hash"]
+        assert root == payload["final_root_hash"]
+        assert payload["event_count"] == len(payload["events"])
+
+
+@pytest.fixture
+def cloud_capture(monkeypatch):
+    reporter = CloudReporter(api_key="akt_test", project="proj")
+    capture = CloudCapture(reporter)
+    monkeypatch.setattr(reporter, "submit_threadsafe", capture.events.append)
+    return capture
