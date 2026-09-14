@@ -1,6 +1,6 @@
 # Spec 13 — Typed Results
 
-Status: **approved** · Written 2026-09-14 · Roadmap item: 2.2 (`specs/06-harness-roadmap.md`)
+Status: **implemented** · Written 2026-09-14 · Roadmap item: 2.2 (`specs/06-harness-roadmap.md`)
 
 ## Goal
 

@@ -11,6 +11,7 @@ agent-kit/
 │   │   ├── agent.py        # Agent + AgentConfig
 │   │   └── loop.py         # AgentLoop (turn execution engine)
 │   ├── hooks.py            # Hooks, Decision, approval requests, policy helpers
+│   ├── output.py           # OutputSpec — typed run outputs (strict schemas, parsing)
 │   ├── compliance.py       # verify_bundle / load_public_keys (offline evidence verification)
 │   ├── cli.py              # `agent-kit verify`
 │   ├── integrations/       # Report other harnesses to agent-kit Cloud
@@ -242,6 +243,7 @@ Managed by Alembic (`server/migrations/versions/`):
 | `specs/03-alerting.md` | Alerting rules, channels, evaluator (spec implemented) |
 | `specs/04-sla-support.md` | SLA-backed support context API (spec implemented) |
 | `specs/05-dashboard-ui.md` | Dashboard UI design spec |
+| `specs/13-typed-results.md` | Typed results: output_type → AgentResult[T] via native structured outputs (implemented) |
 | `specs/12-mcp-client.md` | MCP client: MCPToolset over stdio / streamable HTTP (implemented) |
 | `specs/11-hooks-approval-gates.md` | before_tool / after_tool / before_llm hooks with approvals (implemented) |
 | `specs/10-compliance-exports.md` | Signed evidence bundles, retention, legal holds, deletion receipts (implemented) |
@@ -269,6 +271,8 @@ Managed by Alembic (`server/migrations/versions/`):
 | `test_memory_window.py` | Tool-safe memory trimming, SQLite tool_calls persistence + migration |
 | `test_budgets.py` | Per-run caps, BudgetGuard caching / local spend / fail-open, fleet enforcement |
 | `test_compliance.py` | Offline bundle verification (tampering, wrong keys, receipts) and CLI exit codes |
+| `test_output.py` | OutputSpec strict schema transform, root wrapping, parsing and error formatting |
+| `test_typed_results.py` | Typed runs: native vs prompt mode, repair turns, streaming, tools, audit |
 | `test_mcp.py` | MCPToolset against a real fixture MCP server over stdio and streamable HTTP |
 | `test_hooks.py` | Hook decisions, approvals (grant/deny/timeout/error), output replacement, stop_run, audit events |
 | `test_integrations_recorder.py` | RunRecorder lifecycle, deferred run_start, cost reconciliation, chain integrity |

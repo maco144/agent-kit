@@ -15,7 +15,7 @@ working plan to close that gap, in order.
 | Multi-turn tool loop | ✅ (was broken — fixed in Tier 1) | ✅ | ✅ |
 | Parallel tool calls | ✅ (Tier 1) | ✅ | ✅ |
 | MCP client | ✅ (2.1) | ✅ | ✅ |
-| Typed / structured output | ❌ | ✅ | ✅ |
+| Typed / structured output | ✅ (2.2) | ✅ | ✅ |
 | Approval gates / hooks | ✅ (2.3) | ✅ | ✅ |
 | Context management | Message-count window | ✅ | Partial |
 | Durable runs / resume | ❌ | Sessions | ✅ |
@@ -55,7 +55,7 @@ Implementation plan: `docs/superpowers/plans/2026-09-13-tier1-harness-fundamenta
 
 - [x] **2.1 MCP client** — design: `specs/12-mcp-client.md`. load tools from MCP servers (stdio + streamable HTTP) into `ToolRegistry`;
       allowlist enforcement applies unchanged.
-- [ ] **2.2 Typed results** — `agent.run(prompt, output_type=Model)` returns a validated Pydantic
+- [x] **2.2 Typed results** — design: `specs/13-typed-results.md`. `agent.run(prompt, output_type=Model)` returns a validated Pydantic
       instance via provider structured outputs; fall back to schema-in-prompt + validation.
 - [x] **2.3 Hooks + approval gates** — design: `specs/11-hooks-approval-gates.md`. `before_tool` / `after_tool` / `before_llm` hooks returning
       allow / deny / ask; `ask` pauses the run for an external decision. Extends `ToolRegistry`.

@@ -386,6 +386,31 @@ agent = Agent(
 
 ---
 
+## Typed results
+
+Pass any type Pydantic can validate — a model, dataclass, `TypedDict`, `list[...]`, enum — and get a
+validated value back. Tools, hooks, budgets, and audit still apply on the way there.
+
+```python
+class Quote(BaseModel):
+    customer: str
+    total_usd: float
+
+result = await agent.run("Quote Acme for 10 widgets", output_type=Quote)
+result.parsed.total_usd      # validated Quote; result.output is the raw JSON
+```
+
+- Anthropic and OpenAI constrain the answer with native structured outputs. Ollama does too, except in
+  runs with tools, where its grammar would block tool calls — there the schema goes in the system prompt
+  and repairs are constrained natively. Other providers get the schema in the system prompt.
+- An answer that fails validation goes back to the model with the errors (`AgentConfig(output_retries=2)`),
+  then `OutputValidationError` is raised. Each failure is audited as `output_validation_failed`.
+- `agent.stream(prompt, output_type=Quote)` streams the raw JSON; `agent.last_result.parsed` holds the value.
+
+Full example: [`examples/typed_output.py`](examples/typed_output.py).
+
+---
+
 ## Hooks and approval gates
 
 Put policy around what an agent does — deny tools, require a human, redact what tools return, or stop the run:
