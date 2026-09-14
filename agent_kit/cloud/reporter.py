@@ -136,7 +136,7 @@ class CloudReporter:
             },
         ))
 
-    async def on_run_complete(self, run_id: str, result: AgentResult) -> None:
+    async def on_run_complete(self, run_id: str, result: AgentResult[Any]) -> None:
         payload: dict[str, Any] = {
             "total_cost_usd": result.total_cost_usd,
             "total_tokens": result.total_tokens,

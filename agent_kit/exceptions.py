@@ -119,3 +119,13 @@ class MCPConnectionError(AgentKitError):
 
 class MCPToolError(AgentKitError):
     """An MCP tool call failed; surfaced to the model as a tool error."""
+
+
+class OutputValidationError(AgentKitError):
+    """The final answer never validated against the run's output_type."""
+
+    def __init__(self, errors: str, raw_output: str, attempts: int) -> None:
+        super().__init__(f"Output failed validation after {attempts} attempt(s):\n{errors}")
+        self.errors = errors
+        self.raw_output = raw_output
+        self.attempts = attempts

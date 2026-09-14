@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -100,10 +100,14 @@ class Turn(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class AgentResult(BaseModel):
-    """Final result returned by Agent.run()."""
+T = TypeVar("T")
+
+
+class AgentResult(BaseModel, Generic[T]):
+    """Final result returned by Agent.run(). ``parsed`` holds the validated output_type value."""
 
     output: str
+    parsed: T | None = None
     turns: list[Turn] = Field(default_factory=list)
     total_cost_usd: float = 0.0
     total_tokens: int = 0
@@ -192,7 +196,7 @@ class AuditEventRecord(BaseModel, frozen=True):
 class PipelineResult(BaseModel):
     """Result from LinearPipeline.run()."""
 
-    stage_results: list[AgentResult] = Field(default_factory=list)
+    stage_results: list[AgentResult[Any]] = Field(default_factory=list)
     final_output: str = ""
     total_cost_usd: float = 0.0
     total_tokens: int = 0

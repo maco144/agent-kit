@@ -50,7 +50,7 @@ class LinearPipeline:
         """Execute all stages in sequence and return the aggregated result."""
         t0 = time.monotonic()
         current_input = initial_input
-        stage_results: list[AgentResult] = []
+        stage_results: list[AgentResult[Any]] = []
         total_cost = 0.0
         total_tokens = 0
 

@@ -9,10 +9,16 @@ import uuid
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from agent_kit.audit.chain import AuditChain
-from agent_kit.exceptions import BudgetExceededError, MaxTurnsExceededError, RunStoppedByHookError
+from agent_kit.exceptions import (
+    BudgetExceededError,
+    MaxTurnsExceededError,
+    OutputValidationError,
+    RunStoppedByHookError,
+)
 from agent_kit.hooks import ApprovalRequest, LLMCallContext, ToolCallContext, ToolResultContext, run_hook
 from agent_kit.memory.in_memory import InMemoryStore
 from agent_kit.observability.tracer import AgentTracer
+from agent_kit.output import OutputParseError, OutputSpec
 from agent_kit.providers.base import BaseProvider
 from agent_kit.reliability.circuit_breaker import CircuitBreaker
 from agent_kit.reliability.retry import with_retry
@@ -34,6 +40,11 @@ if TYPE_CHECKING:
     from agent_kit.cloud.budgets import BudgetGuard
     from agent_kit.cloud.reporter import CloudReporter
     from agent_kit.hooks import Approver, Hooks
+
+_REPAIR_PROMPT = (
+    "Your response did not match the required output schema:\n{errors}\n"
+    "Respond again with only the corrected JSON."
+)
 
 
 class AgentLoop:
@@ -71,6 +82,7 @@ class AgentLoop:
         hooks: Hooks | None = None,
         approver: Approver | None = None,
         approval_timeout_s: float = 300.0,
+        output_retries: int = 2,
     ) -> None:
         self._provider = provider
         self._registry = registry
@@ -93,31 +105,46 @@ class AgentLoop:
         self._hooks = hooks
         self._approver = approver
         self._approval_timeout_s = approval_timeout_s
+        self._output_retries = output_retries
         self._run_id = ""
         self._context: dict[str, Any] = {}
         self._pending_stop: RunStoppedByHookError | None = None
         self._turns: list[Turn] = []
-        self.result: AgentResult | None = None
+        self.result: AgentResult[Any] | None = None
 
-    async def run(self, prompt: str, **context: Any) -> AgentResult:
+    async def run(self, prompt: str, output_type: Any = None, **context: Any) -> AgentResult[Any]:
         """Execute the agent loop and return the final result."""
-        async for _ in self._execute(prompt, streaming=False, context=context):
+        async for _ in self._execute(prompt, streaming=False, context=context, output_type=output_type):
             pass
         assert self.result is not None
         return self.result
 
-    async def stream(self, prompt: str, **context: Any) -> AsyncIterator[str]:
+    async def stream(self, prompt: str, output_type: Any = None, **context: Any) -> AsyncIterator[str]:
         """Execute the agent loop, yielding text as it streams. ``self.result`` is set at the end."""
-        async for chunk in self._execute(prompt, streaming=True, context=context):
+        async for chunk in self._execute(prompt, streaming=True, context=context, output_type=output_type):
             yield chunk
 
     async def _execute(
-        self, prompt: str, streaming: bool, context: dict[str, Any]
+        self, prompt: str, streaming: bool, context: dict[str, Any], output_type: Any = None
     ) -> AsyncIterator[str]:
         """The agent loop. Yields text chunks when ``streaming``; sets ``self.result`` on success."""
         run_id = str(uuid.uuid4())
         self._run_id = run_id
         self._context = dict(context)
+
+        # Typed runs: constrain natively when the provider can, else describe the schema in the prompt
+        spec = OutputSpec.from_type(output_type) if output_type is not None else None
+        native = (
+            spec is not None
+            and spec.native_compatible
+            and bool(getattr(self._provider, "supports_structured_output", False))
+        )
+        system = self._system_prompt
+        if spec is not None and not native:
+            system = f"{system}\n\n{spec.instructions()}" if system else spec.instructions()
+        output_kwargs: dict[str, Any] = {"output_schema": spec} if native else {}
+        parsed: Any = None
+        invalid_answers = 0
 
         if self._reporter:
             await self._reporter.on_run_start(
@@ -167,6 +194,8 @@ class AgentLoop:
                                 self._open_stream,
                                 messages,
                                 tool_schemas or None,
+                                system,
+                                output_kwargs,
                             )
                             chunks: list[str] = []
                             while item is not None:
@@ -193,8 +222,9 @@ class AgentLoop:
                                 messages,
                                 model=self._model,
                                 tools=tool_schemas if tool_schemas else None,
-                                system=self._system_prompt or None,
+                                system=system or None,
                                 max_tokens=self._max_tokens_per_turn,
+                                **output_kwargs,
                             )
                         llm_span.set_attribute("input_tokens", turn.cost.input_tokens)
                         llm_span.set_attribute("output_tokens", turn.cost.output_tokens)
@@ -229,13 +259,37 @@ class AgentLoop:
                     if turn.message_out:
                         self._memory.add(turn.message_out)
 
-                    # No tool calls → we have the final answer
+                    # No tool calls → a final answer (validated when the run is typed)
                     if not turn.tool_calls:
                         final_output = turn.message_out.content if turn.message_out else ""
                         self._turns.append(turn)
                         if self._reporter:
                             await self._reporter.on_turn_complete(run_id, turn, len(self._turns) - 1)
-                        break
+                        if spec is None:
+                            break
+                        try:
+                            parsed = spec.parse(final_output)
+                            break
+                        except OutputParseError as exc:
+                            invalid_answers += 1
+                            self._audit_event(
+                                "output_validation_failed",
+                                "agent",
+                                {
+                                    "turn": turn_count,
+                                    "attempt": invalid_answers,
+                                    "native": native,
+                                    "errors": exc.errors[:500],
+                                },
+                            )
+                            if invalid_answers > self._output_retries:
+                                raise OutputValidationError(
+                                    exc.errors, final_output, invalid_answers
+                                ) from None
+                            self._memory.add(
+                                Message(role="user", content=_REPAIR_PROMPT.format(errors=exc.errors))
+                            )
+                            continue
 
                     # --- Execute tool calls concurrently; record results in call order ---
                     tool_results = await asyncio.gather(
@@ -294,14 +348,16 @@ class AgentLoop:
                         "turns": turn_count,
                         "total_tokens": self._tracer.cumulative_tokens(),
                         "total_cost_usd": self._tracer.cumulative_cost_usd(),
+                        "output_type": spec.name if spec else None,
                     },
                 )
 
             root_span.set_attribute("total_turns", turn_count)
             root_span.set_attribute("total_cost_usd", self._tracer.cumulative_cost_usd())
 
-        result = AgentResult(
+        result: AgentResult[Any] = AgentResult(
             output=final_output,
+            parsed=parsed,
             turns=self._turns,
             total_cost_usd=self._tracer.cumulative_cost_usd(),
             total_tokens=self._tracer.cumulative_tokens(),
@@ -343,15 +399,20 @@ class AgentLoop:
             raise
 
     async def _open_stream(
-        self, messages: list[Message], tools: list[ToolSchema] | None
+        self,
+        messages: list[Message],
+        tools: list[ToolSchema] | None,
+        system: str,
+        output_kwargs: dict[str, Any],
     ) -> tuple[AsyncIterator[str | Turn], str | Turn | None]:
         """Start a provider stream and pull its first item, so connection failures are retryable."""
         it = self._provider.stream(
             messages,
             model=self._model,
             tools=tools,
-            system=self._system_prompt or None,
+            system=system or None,
             max_tokens=self._max_tokens_per_turn,
+            **output_kwargs,
         ).__aiter__()
         return it, await anext(it, None)
 

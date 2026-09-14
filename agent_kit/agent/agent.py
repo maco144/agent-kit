@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator, TypeVar, overload
 
 from agent_kit.agent.loop import AgentLoop
 from agent_kit.audit.chain import AuditChain
@@ -16,6 +16,8 @@ from agent_kit.types import (
     CircuitBreakerConfig,
     RetryPolicyConfig,
 )
+
+T = TypeVar("T")
 
 if TYPE_CHECKING:
     from agent_kit.cloud.reporter import CloudReporter
@@ -48,6 +50,7 @@ class AgentConfig:
         hooks: Hooks | None = None,
         approver: Approver | None = None,
         approval_timeout_s: float = 300.0,
+        output_retries: int = 2,
     ) -> None:
         self.model = model
         self.system_prompt = system_prompt
@@ -65,6 +68,7 @@ class AgentConfig:
         self.hooks = hooks  # before_tool / after_tool / before_llm policy hooks
         self.approver = approver  # awaited when a before_tool hook asks for approval
         self.approval_timeout_s = approval_timeout_s  # no answer in time → deny
+        self.output_retries = output_retries  # repair turns after an invalid typed answer
 
 
 class Agent:
@@ -121,29 +125,38 @@ class Agent:
         )
         self._tracer = self._config.tracer or AgentTracer()
         self._audit: AuditChain | None = AuditChain() if self._config.audit_enabled else None
-        self.last_result: AgentResult | None = None
+        self.last_result: AgentResult[Any] | None = None
 
     def add_tool(self, t: Tool) -> "Agent":
         """Register a tool and return self for fluent chaining."""
         self._registry.register(t)
         return self
 
-    async def run(self, prompt: str, **context: Any) -> AgentResult:
+    @overload
+    async def run(self, prompt: str, *, output_type: type[T], **context: Any) -> AgentResult[T]: ...
+
+    @overload
+    async def run(self, prompt: str, *, output_type: None = None, **context: Any) -> AgentResult[Any]: ...
+
+    async def run(self, prompt: str, *, output_type: Any = None, **context: Any) -> AgentResult[Any]:
         """
         Run the agent on a prompt and return the final result.
 
-        Context kwargs are available for future middleware hooks but do not
-        affect the core loop in v0.1.
+        With ``output_type`` (any type Pydantic can validate), the final answer is constrained to its
+        JSON Schema — natively when the provider supports structured outputs, otherwise via the system
+        prompt — and validated into ``result.parsed``. Invalid answers are sent back to the model up to
+        ``AgentConfig.output_retries`` times. Context kwargs reach hooks as ``ctx.context``.
 
         Raises:
             MaxTurnsExceededError: if the agent runs out of turns
             CircuitOpenError: if the provider circuit breaker is OPEN
             ProviderError: if the LLM call fails and retries are exhausted
+            OutputValidationError: if a typed answer never validates
         """
-        self.last_result = await self._make_loop().run(prompt, **context)
+        self.last_result = await self._make_loop().run(prompt, output_type=output_type, **context)
         return self.last_result
 
-    async def stream(self, prompt: str, **context: Any) -> AsyncIterator[str]:
+    async def stream(self, prompt: str, *, output_type: Any = None, **context: Any) -> AsyncIterator[str]:
         """
         Stream the agent's response as text chunks.
 
@@ -152,9 +165,12 @@ class Agent:
         opening each provider stream; a failure mid-stream propagates. The
         completed AgentResult is available as ``agent.last_result`` once the
         iterator is exhausted.
+
+        With ``output_type``, chunks are the raw JSON of each answer (including invalid attempts before
+        a repair); ``agent.last_result.parsed`` holds the validated value.
         """
         loop = self._make_loop()
-        async for chunk in loop.stream(prompt, **context):
+        async for chunk in loop.stream(prompt, output_type=output_type, **context):
             yield chunk
         self.last_result = loop.result
 
@@ -181,6 +197,7 @@ class Agent:
             hooks=self._config.hooks,
             approver=self._config.approver,
             approval_timeout_s=self._config.approval_timeout_s,
+            output_retries=self._config.output_retries,
         )
 
     @property

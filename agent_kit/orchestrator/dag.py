@@ -34,7 +34,7 @@ class TaskNode:
 class DAGResult:
     """Aggregated result from a full DAG execution."""
 
-    node_results: dict[str, AgentResult] = field(default_factory=dict)
+    node_results: dict[str, AgentResult[Any]] = field(default_factory=dict)
     final_output: str = ""          # output of the last node in topological order
     total_cost_usd: float = 0.0
     total_tokens: int = 0
@@ -139,7 +139,7 @@ class DAGOrchestrator:
         self,
         node: TaskNode,
         initial_input: str,
-        completed: dict[str, AgentResult],
+        completed: dict[str, AgentResult[Any]],
     ) -> str:
         prompt = node.prompt_template
 
@@ -162,7 +162,7 @@ class DAGOrchestrator:
     ) -> DAGResult:
         """Execute the DAG with maximum parallelism and return aggregated results."""
         t0 = time.monotonic()
-        completed: dict[str, AgentResult] = {}
+        completed: dict[str, AgentResult[Any]] = {}
         execution_order: list[str] = []
         semaphore = asyncio.Semaphore(self._max_parallel)
 
