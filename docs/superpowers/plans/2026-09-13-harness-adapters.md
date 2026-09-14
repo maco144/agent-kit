@@ -1144,6 +1144,8 @@ from typing import TYPE_CHECKING, Any
 from agent_kit.integrations.recorder import RunRecorder
 
 if TYPE_CHECKING:
+    from claude_agent_sdk import HookJSONOutput
+
     from agent_kit.cloud.reporter import CloudReporter
 
 logger = logging.getLogger("agent_kit.integrations")
@@ -1205,7 +1207,7 @@ class ClaudeAgentObserver:
 
     async def _on_hook(
         self, input_data: Any, tool_use_id: str | None, context: Any
-    ) -> dict[str, Any]:
+    ) -> HookJSONOutput:  # the SDK's type, so HookMatcher(hooks=[...]) type-checks
         try:
             self._record_hook(input_data, tool_use_id)
         except Exception:
