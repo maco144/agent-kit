@@ -72,9 +72,18 @@ class CloudReporter:
         self._queue: asyncio.Queue[CloudEvent] = asyncio.Queue(maxsize=max_queue_size)
         self._flush_task: asyncio.Task[None] | None = None
         self._http: httpx.AsyncClient | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
         import atexit
         atexit.register(self._flush_sync)
+
+    @property
+    def project(self) -> str:
+        return self._project
+
+    @property
+    def agent_name(self) -> str:
+        return self._agent_name
 
     # ------------------------------------------------------------------
     # Lifecycle hooks — called by AgentLoop
@@ -171,22 +180,7 @@ class CloudReporter:
             run_id=run_id,
             agent_name=self._agent_name,
             project=self._project,
-            payload={
-                "final_root_hash": final_root_hash,
-                "event_count": len(events),
-                "events": [
-                    {
-                        "event_id": e.event_id,
-                        "event_type": e.event_type,
-                        "actor": e.actor,
-                        "payload_hash": e.payload_hash,
-                        "prev_root": e.prev_root,
-                        "leaf_hash": e.leaf_hash,
-                        "timestamp": e.timestamp.isoformat(),
-                    }
-                    for e in events
-                ],
-            },
+            payload=audit_flush_payload(events, final_root_hash),
         ))
 
     # ------------------------------------------------------------------
@@ -210,12 +204,36 @@ class CloudReporter:
             await self._http.aclose()
             self._http = None
 
+    def submit_threadsafe(self, event: CloudEvent) -> None:
+        """
+        Enqueue an event from synchronous code on any thread. Never raises.
+
+        Used by harness adapters whose callbacks are synchronous. On the reporter's
+        event-loop thread the event is queued directly; from any other thread it is
+        handed to that loop. Before a loop has started, it waits in the queue for the
+        next flush or the exit-time flush.
+        """
+        try:
+            running: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        loop = self._loop
+        if loop is not None and loop.is_running() and running is not loop:
+            loop.call_soon_threadsafe(self.submit_threadsafe, event)
+            return
+        if running is not None:
+            self._ensure_flush_task()
+        self._put(event)
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
     async def _enqueue(self, event: CloudEvent) -> None:
         self._ensure_flush_task()
+        self._put(event)
+
+    def _put(self, event: CloudEvent) -> None:
         try:
             self._queue.put_nowait(event)
         except asyncio.QueueFull:
@@ -230,6 +248,7 @@ class CloudReporter:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
+        self._loop = loop
         if self._http is None:
             self._http = httpx.AsyncClient(
                 timeout=httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
@@ -312,6 +331,26 @@ class CloudReporter:
 
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+def audit_flush_payload(events: list[AuditEventRecord], final_root_hash: str) -> dict[str, Any]:
+    """The audit_flush payload the ingest API verifies: every chain link, hashes only."""
+    return {
+        "final_root_hash": final_root_hash,
+        "event_count": len(events),
+        "events": [
+            {
+                "event_id": e.event_id,
+                "event_type": e.event_type,
+                "actor": e.actor,
+                "payload_hash": e.payload_hash,
+                "prev_root": e.prev_root,
+                "leaf_hash": e.leaf_hash,
+                "timestamp": e.timestamp.isoformat(),
+            }
+            for e in events
+        ],
+    }
 
 
 def _encode_batch(events: list[CloudEvent]) -> bytes:

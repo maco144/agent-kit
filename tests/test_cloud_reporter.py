@@ -290,3 +290,44 @@ def test_reporter_repr():
     r = repr(reporter)
     assert "billing-assistant" in r
     assert "test" in r
+
+
+# ---------------------------------------------------------------------------
+# submit_threadsafe
+# ---------------------------------------------------------------------------
+
+
+def _drain(reporter: CloudReporter) -> list[CloudEvent]:
+    """Empty the queue so the atexit flush has nothing to send."""
+    drained = []
+    while not reporter._queue.empty():
+        drained.append(reporter._queue.get_nowait())
+    return drained
+
+
+def _event(run_id: str) -> CloudEvent:
+    return CloudEvent(event_type=EventType.RUN_START, run_id=run_id, agent_name="a", project="p")
+
+
+async def test_submit_threadsafe_from_worker_thread_reaches_loop_queue():
+    import asyncio
+
+    reporter = make_reporter(flush_interval_s=3600)
+    reporter.submit_threadsafe(_event("on-loop"))
+    await asyncio.to_thread(reporter.submit_threadsafe, _event("off-loop"))
+    await asyncio.sleep(0)
+
+    assert [e.run_id for e in _drain(reporter)] == ["on-loop", "off-loop"]
+    assert reporter._flush_task is not None
+    reporter._flush_task.cancel()
+
+
+def test_submit_threadsafe_without_a_loop_queues_for_later_flush():
+    reporter = make_reporter()
+    reporter.submit_threadsafe(_event("no-loop"))
+    assert [e.run_id for e in _drain(reporter)] == ["no-loop"]
+
+
+def test_reporter_exposes_project_and_agent_name():
+    reporter = make_reporter(project="billing", agent_name="assistant")
+    assert (reporter.project, reporter.agent_name) == ("billing", "assistant")
