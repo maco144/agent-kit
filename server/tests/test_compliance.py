@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import io
+import json
 import uuid
+import zipfile
 from datetime import datetime, timedelta
 
 import pytest
@@ -11,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+from app.compliance import bundle as bundle_module
 from app.compliance import signing
 from app.compliance.retention import effective_retention, purge_expired, receipt_fields
 from app.models import AuditEvent, AuditRun, DeletionReceipt, LegalHold, Organization, SigningKey
@@ -210,3 +215,97 @@ async def test_deletions_api(client, db, org_and_key):
 
     assert len(deletions) == 1
     assert {"run_id", "final_root_hash", "event_count", "deleted_at", "kid", "signature"} <= set(deletions[0])
+
+
+def open_bundle(content: bytes) -> dict[str, bytes]:
+    with zipfile.ZipFile(io.BytesIO(content)) as zf:
+        return {name: zf.read(name) for name in zf.namelist()}
+
+
+def jsonl(data: bytes) -> list[dict]:
+    return [json.loads(line) for line in data.decode().splitlines() if line]
+
+
+async def test_export_bundle_is_signed_and_self_consistent(client, db, org_and_key):
+    org, _ = org_and_key
+    now = datetime.utcnow()
+    in_range = audit_run(org.id, completed_days_ago=1, created_days_ago=1, now=now, events=3)
+    other_project = audit_run(org.id, project="staging", completed_days_ago=1, created_days_ago=1, now=now)
+    too_old = audit_run(org.id, completed_days_ago=40, created_days_ago=40, now=now)
+    await add_runs(db, in_range, other_project, too_old)
+    db.add(LegalHold(org_id=org.id, project="claims", reason="case #4471"))
+    await db.commit()
+
+    params = {"from": (now - timedelta(days=2)).isoformat(), "to": now.isoformat()}
+    resp = await client.get("/v1/compliance/export", params=params)
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/zip"
+    assert "attachment" in resp.headers["content-disposition"]
+    files = open_bundle(resp.content)
+    assert set(files) == {"manifest.json", "manifest.sig", "runs.jsonl", "events.jsonl", "verification.json", "deletions.jsonl"}
+
+    manifest = json.loads(files["manifest.json"])
+    sig = json.loads(files["manifest.sig"])
+    keys = {k["kid"]: k for k in (await client.get("/.well-known/agentkit-signing-keys")).json()["keys"]}
+    verify_sig(keys[sig["kid"]]["public_key"], sig["signature"], files["manifest.json"])
+    assert (manifest["format"], sig["alg"], manifest["signing"]["kid"]) == ("agentkit-evidence-bundle/1", "Ed25519", sig["kid"])
+    for name, digest in manifest["files"].items():
+        assert hashlib.sha256(files[name]).hexdigest() == digest
+
+    runs = jsonl(files["runs.jsonl"])
+    assert {r["run_id"] for r in runs} == {in_range[0].run_id, other_project[0].run_id}
+    assert manifest["counts"] == {"runs": 2, "events": 5, "deletions": 0}
+    assert manifest["retention"] == {"audit_retention_days": 7, "source": "tier"}
+    assert [h["project"] for h in manifest["legal_holds"]] == ["claims"]
+    events = [e for e in jsonl(files["events.jsonl"]) if e["run_id"] == in_range[0].run_id]
+    assert [e["seq"] for e in events] == [0, 1, 2]
+    verification = json.loads(files["verification.json"])
+    assert (verification["verified"], verification["failed"]) == (2, 0)
+
+    scoped = open_bundle((await client.get("/v1/compliance/export", params={**params, "project": "prod"})).content)
+    assert [r["run_id"] for r in jsonl(scoped["runs.jsonl"])] == [in_range[0].run_id]
+
+
+async def test_export_reports_a_tampered_stored_chain(client, db, org_and_key):
+    org, _ = org_and_key
+    now = datetime.utcnow()
+    run, events = audit_run(org.id, completed_days_ago=1, created_days_ago=1, now=now)
+    events[1].payload_hash = "f" * 64
+    await add_runs(db, (run, events))
+
+    resp = await client.get("/v1/compliance/export", params={"from": (now - timedelta(days=2)).isoformat(), "to": now.isoformat()})
+
+    verification = json.loads(open_bundle(resp.content)["verification.json"])
+    assert verification["failed"] == 1
+    assert verification["runs"][0] == {"run_id": run.run_id, "verified": False, "broken_seq": 1}
+
+
+async def test_export_includes_deletion_receipts_in_range(client, db, org_and_key):
+    org, _ = org_and_key
+    await add_runs(db, audit_run(org.id, completed_days_ago=20))
+    await purge_expired(db)
+    now = datetime.utcnow()
+
+    resp = await client.get("/v1/compliance/export", params={"from": (now - timedelta(hours=1)).isoformat(),
+                                                             "to": (now + timedelta(hours=1)).isoformat()})
+
+    files = open_bundle(resp.content)
+    (receipt,) = jsonl(files["deletions.jsonl"])
+    assert json.loads(files["manifest.json"])["counts"]["deletions"] == 1
+    assert {"kid", "signature", "final_root_hash"} <= set(receipt)
+
+
+async def test_export_rejects_bad_ranges_and_oversized_scopes(client, db, org_and_key, monkeypatch):
+    org, _ = org_and_key
+    now = datetime.utcnow()
+    await add_runs(db, audit_run(org.id, completed_days_ago=1, created_days_ago=1, now=now))
+    params = {"from": (now - timedelta(days=2)).isoformat(), "to": now.isoformat()}
+
+    same = now.isoformat()
+    assert (await client.get("/v1/compliance/export", params={"from": same, "to": same})).status_code == 400
+
+    monkeypatch.setattr(bundle_module, "MAX_RUNS", 0)
+    resp = await client.get("/v1/compliance/export", params=params)
+    assert resp.status_code == 400
+    assert "at most 0" in resp.json()["detail"]

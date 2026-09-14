@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_org
 from app.compliance import signing
+from app.compliance.bundle import BundleTooLarge, build_bundle
 from app.compliance.retention import MAX_RETENTION_DAYS, effective_retention
 from app.database import get_db
 from app.models import AuditRun, DeletionReceipt, LegalHold, Organization
@@ -114,3 +115,33 @@ async def list_deletions(
         q = q.where(DeletionReceipt.deleted_at < to)
     rows = (await db.execute(q.order_by(DeletionReceipt.deleted_at))).scalars().all()
     return DeletionList(deletions=[DeletionReceiptOut.model_validate(r) for r in rows])
+
+
+@router.get("/export")
+async def export_bundle(
+    from_: datetime = Query(..., alias="from"),
+    to: datetime = Query(...),
+    project: str | None = Query(None),
+    agent_name: str | None = Query(None),
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """A signed evidence bundle (zip) of audit chains started in [from, to)."""
+    from_, to = _naive_utc(from_), _naive_utc(to)
+    if from_ >= to:
+        raise HTTPException(status_code=400, detail="'from' must be earlier than 'to'.")
+    try:
+        content = await build_bundle(org, db, from_, to, project, agent_name)
+    except BundleTooLarge as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    await db.commit()  # persists a newly generated signing key, if one was created
+    filename = f"agentkit-evidence-{from_.date().isoformat()}-{to.date().isoformat()}.zip"
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _naive_utc(value: datetime) -> datetime:
+    return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
