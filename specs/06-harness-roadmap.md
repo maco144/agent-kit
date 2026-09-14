@@ -53,7 +53,7 @@ Implementation plan: `docs/superpowers/plans/2026-09-13-tier1-harness-fundamenta
 
 ## Tier 2 — Parity
 
-- [ ] **2.1 MCP client** — load tools from MCP servers (stdio + streamable HTTP) into `ToolRegistry`;
+- [ ] **2.1 MCP client** — design: `specs/12-mcp-client.md`. load tools from MCP servers (stdio + streamable HTTP) into `ToolRegistry`;
       allowlist enforcement applies unchanged.
 - [ ] **2.2 Typed results** — `agent.run(prompt, output_type=Model)` returns a validated Pydantic
       instance via provider structured outputs; fall back to schema-in-prompt + validation.
