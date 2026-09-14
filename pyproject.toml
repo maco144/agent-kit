@@ -69,3 +69,8 @@ select = ["E4", "E7", "E9", "F"]
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# TracingProcessor is Any when openai-agents isn't installed; subclassing it is intended.
+module = "agent_kit.integrations.openai_agents"
+disallow_subclassing_any = false
