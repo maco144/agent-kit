@@ -9,7 +9,8 @@ import uuid
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from agent_kit.audit.chain import AuditChain
-from agent_kit.exceptions import BudgetExceededError, MaxTurnsExceededError
+from agent_kit.exceptions import BudgetExceededError, MaxTurnsExceededError, RunStoppedByHookError
+from agent_kit.hooks import ApprovalRequest, LLMCallContext, ToolCallContext, ToolResultContext, run_hook
 from agent_kit.memory.in_memory import InMemoryStore
 from agent_kit.observability.tracer import AgentTracer
 from agent_kit.providers.base import BaseProvider
@@ -32,6 +33,7 @@ from agent_kit.types import (
 if TYPE_CHECKING:
     from agent_kit.cloud.budgets import BudgetGuard
     from agent_kit.cloud.reporter import CloudReporter
+    from agent_kit.hooks import Approver, Hooks
 
 
 class AgentLoop:
@@ -66,6 +68,9 @@ class AgentLoop:
         reporter: CloudReporter | None = None,
         max_run_cost_usd: float | None = None,
         budget_guard: BudgetGuard | None = None,
+        hooks: Hooks | None = None,
+        approver: Approver | None = None,
+        approval_timeout_s: float = 300.0,
     ) -> None:
         self._provider = provider
         self._registry = registry
@@ -85,6 +90,12 @@ class AgentLoop:
         self._max_run_cost_usd = max_run_cost_usd
         self._budget_guard = budget_guard
         self._run_cost_usd = 0.0
+        self._hooks = hooks
+        self._approver = approver
+        self._approval_timeout_s = approval_timeout_s
+        self._run_id = ""
+        self._context: dict[str, Any] = {}
+        self._pending_stop: RunStoppedByHookError | None = None
         self._turns: list[Turn] = []
         self.result: AgentResult | None = None
 
@@ -105,6 +116,8 @@ class AgentLoop:
     ) -> AsyncIterator[str]:
         """The agent loop. Yields text chunks when ``streaming``; sets ``self.result`` on success."""
         run_id = str(uuid.uuid4())
+        self._run_id = run_id
+        self._context = dict(context)
 
         if self._reporter:
             await self._reporter.on_run_start(
@@ -133,6 +146,7 @@ class AgentLoop:
                     turn_count += 1
                     await self._enforce_budgets()
                     messages = self._memory.history(include_system=False)
+                    await self._gate_llm(turn_count, len(messages))
                     tool_schemas = self._registry.schemas()
 
                     # --- LLM call with circuit breaker + retry ---
@@ -225,7 +239,7 @@ class AgentLoop:
 
                     # --- Execute tool calls concurrently; record results in call order ---
                     tool_results = await asyncio.gather(
-                        *(self._run_tool(tc) for tc in turn.tool_calls)
+                        *(self._run_tool(tc, turn_count) for tc in turn.tool_calls)
                     )
                     for tc, tool_result in zip(turn.tool_calls, tool_results):
                         # Audit: tool execution
@@ -243,9 +257,9 @@ class AgentLoop:
 
                         # Feed tool result back as a tool message
                         output_str = (
-                            json.dumps(tool_result.output, default=str)
-                            if tool_result.output is not None
-                            else f"Error: {tool_result.error}"
+                            f"Error: {tool_result.error}"
+                            if tool_result.error
+                            else json.dumps(tool_result.output, default=str)
                         )
                         self._memory.add(
                             Message(
@@ -260,6 +274,8 @@ class AgentLoop:
                     self._turns.append(turn)
                     if self._reporter:
                         await self._reporter.on_turn_complete(run_id, turn, len(self._turns) - 1)
+                    if self._pending_stop is not None:
+                        raise self._pending_stop
 
                 else:
                     raise MaxTurnsExceededError(self._max_turns)
@@ -339,35 +355,157 @@ class AgentLoop:
         ).__aiter__()
         return it, await anext(it, None)
 
-    async def _run_tool(self, tc: ToolCall) -> ToolResult:
-        """Execute one tool call inside its span. Never raises — failures become ToolResult.error."""
-        with self._tracer.span(
-            f"tool.{tc.tool_name}",
-            kind=SpanKind.TOOL,
-            tool=tc.tool_name,
-        ) as tool_span:
+    async def _run_tool(self, tc: ToolCall, turn: int) -> ToolResult:
+        """Gate, execute, and filter one tool call inside its span. Never raises."""
+        with self._tracer.span(f"tool.{tc.tool_name}", kind=SpanKind.TOOL, tool=tc.tool_name) as tool_span:
             t0 = time.monotonic()
-            try:
-                tool = self._registry.get(tc.tool_name)
-                tool_result = await tool(call_id=tc.call_id, **tc.arguments)
-            except Exception as exc:
-                tool_result = ToolResult(
+
+            def failed(error: str) -> ToolResult:
+                return ToolResult(
                     call_id=tc.call_id,
                     tool_name=tc.tool_name,
                     output=None,
-                    error=str(exc),
+                    error=error,
                     duration_ms=int((time.monotonic() - t0) * 1000),
                 )
+
+            try:
+                tool = self._registry.get(tc.tool_name)
+            except Exception as exc:
+                tool_result = failed(str(exc))
+            else:
+                denial = await self._gate_tool(tc, turn)
+                if denial is not None:
+                    tool_result = failed(f"Tool call denied: {denial}")
+                else:
+                    try:
+                        tool_result = await tool(call_id=tc.call_id, **tc.arguments)
+                    except Exception as exc:
+                        tool_result = failed(str(exc))
+                    tool_result = await self._filter_output(tc, turn, tool_result)
 
             tool_span.set_attribute("duration_ms", tool_result.duration_ms)
             tool_span.set_attribute("success", tool_result.error is None)
 
-        self._tracer.record_tool_call(
-            tc.tool_name,
-            tool_result.duration_ms,
-            tool_result.error is None,
-        )
+        self._tracer.record_tool_call(tc.tool_name, tool_result.duration_ms, tool_result.error is None)
         return tool_result
+
+    async def _gate_tool(self, tc: ToolCall, turn: int) -> str | None:
+        """Run before_tool hooks. Returns a denial reason, or None to execute."""
+        if self._hooks is None or not self._hooks.before_tool:
+            return None
+        ctx = ToolCallContext(
+            run_id=self._run_id,
+            turn=turn,
+            tool_name=tc.tool_name,
+            arguments=dict(tc.arguments),
+            call_id=tc.call_id,
+            context=self._context,
+        )
+        for hook in self._hooks.before_tool:
+            decision = await run_hook(hook, ctx)
+            if decision.kind == "allow":
+                continue
+            if decision.kind == "ask":
+                return await self._request_approval(ctx, decision.reason)
+            if decision.kind == "deny":
+                return self._deny_tool(ctx, "before_tool", decision.reason or "denied", decision.stop_run)
+            return self._deny_tool(ctx, "before_tool", f"invalid decision '{decision.kind}' from before_tool hook")
+        return None
+
+    async def _request_approval(self, ctx: ToolCallContext, reason: str | None) -> str | None:
+        self._audit_event("approval_requested", ctx.tool_name, {"call_id": ctx.call_id, "reason": reason})
+        if self._approver is None:
+            return self._deny_tool(ctx, "before_tool", "approval required but no approver is configured")
+        request = ApprovalRequest(
+            run_id=ctx.run_id,
+            turn=ctx.turn,
+            tool_name=ctx.tool_name,
+            arguments=dict(ctx.arguments),
+            call_id=ctx.call_id,
+            reason=reason,
+            context=ctx.context,
+        )
+        try:
+            approved = await asyncio.wait_for(self._approver(request), timeout=self._approval_timeout_s)
+        except asyncio.TimeoutError:
+            self._audit_event("approval_denied", ctx.tool_name, {"call_id": ctx.call_id, "timed_out": True, "error": None})
+            return self._deny_tool(ctx, "before_tool", f"approval timed out after {self._approval_timeout_s:g}s")
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            self._audit_event("approval_denied", ctx.tool_name, {"call_id": ctx.call_id, "timed_out": False, "error": error})
+            return self._deny_tool(ctx, "before_tool", f"approver error: {error}")
+        if approved:
+            self._audit_event("approval_granted", ctx.tool_name, {"call_id": ctx.call_id})
+            return None
+        self._audit_event("approval_denied", ctx.tool_name, {"call_id": ctx.call_id, "timed_out": False, "error": None})
+        return self._deny_tool(ctx, "before_tool", "approval denied")
+
+    def _deny_tool(self, ctx: ToolCallContext, stage: str, reason: str, stop_run: bool = False) -> str:
+        self._audit_event(
+            "tool_denied", ctx.tool_name, {"call_id": ctx.call_id, "stage": stage, "reason": reason, "stop_run": stop_run}
+        )
+        if stop_run and self._pending_stop is None:
+            self._pending_stop = RunStoppedByHookError(stage, reason, tool_name=ctx.tool_name)
+        return reason
+
+    async def _filter_output(self, tc: ToolCall, turn: int, result: ToolResult) -> ToolResult:
+        """Run after_tool hooks; replacements chain, a deny withholds the output."""
+        if self._hooks is None or not self._hooks.after_tool:
+            return result
+        output = result.output
+        for hook in self._hooks.after_tool:
+            ctx = ToolResultContext(
+                run_id=self._run_id,
+                turn=turn,
+                tool_name=tc.tool_name,
+                arguments=dict(tc.arguments),
+                call_id=tc.call_id,
+                context=self._context,
+                output=output,
+                error=result.error,
+                duration_ms=result.duration_ms,
+            )
+            decision = await run_hook(hook, ctx)
+            if decision.kind == "allow":
+                continue
+            if decision.kind == "replace":
+                output = decision.output
+                self._audit_event("tool_output_replaced", tc.tool_name, {"call_id": tc.call_id, "reason": decision.reason})
+                continue
+            if decision.kind == "deny":
+                reason = self._deny_tool(ctx, "after_tool", decision.reason or "denied", decision.stop_run)
+            else:
+                reason = self._deny_tool(ctx, "after_tool", f"invalid decision '{decision.kind}' from after_tool hook")
+            return result.model_copy(update={"output": None, "error": f"Tool output blocked: {reason}"})
+        return result.model_copy(update={"output": output})
+
+    async def _gate_llm(self, turn: int, message_count: int) -> None:
+        if self._hooks is None or not self._hooks.before_llm:
+            return
+        ctx = LLMCallContext(
+            run_id=self._run_id,
+            turn=turn,
+            model=self._model or self._provider.config.default_model,
+            message_count=message_count,
+            run_cost_usd=self._run_cost_usd,
+            context=self._context,
+        )
+        for hook in self._hooks.before_llm:
+            decision = await run_hook(hook, ctx)
+            if decision.kind == "allow":
+                continue
+            reason = (
+                decision.reason or "denied"
+                if decision.kind == "deny"
+                else f"invalid decision '{decision.kind}' from before_llm hook"
+            )
+            self._audit_event("llm_call_denied", "agent", {"turn": turn, "reason": reason})
+            raise RunStoppedByHookError("before_llm", reason)
+
+    def _audit_event(self, event_type: str, actor: str, payload: dict[str, Any]) -> None:
+        if self._audit:
+            self._audit.append(event_type, actor=actor, payload=payload)
 
     async def _cb_call(
         self, run_id: str, fn: Any, *args: Any, **kwargs: Any

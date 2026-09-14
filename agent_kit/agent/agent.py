@@ -19,6 +19,7 @@ from agent_kit.types import (
 
 if TYPE_CHECKING:
     from agent_kit.cloud.reporter import CloudReporter
+    from agent_kit.hooks import Approver, Hooks
 
 
 class AgentConfig:
@@ -44,6 +45,9 @@ class AgentConfig:
         cloud: CloudReporter | None = None,
         max_run_cost_usd: float | None = None,
         enforce_budgets: bool = False,
+        hooks: Hooks | None = None,
+        approver: Approver | None = None,
+        approval_timeout_s: float = 300.0,
     ) -> None:
         self.model = model
         self.system_prompt = system_prompt
@@ -58,6 +62,9 @@ class AgentConfig:
         self.cloud = cloud
         self.max_run_cost_usd = max_run_cost_usd  # per-run hard cap, enforced before each model call
         self.enforce_budgets = enforce_budgets  # fleet budgets from agent-kit Cloud (requires cloud)
+        self.hooks = hooks  # before_tool / after_tool / before_llm policy hooks
+        self.approver = approver  # awaited when a before_tool hook asks for approval
+        self.approval_timeout_s = approval_timeout_s  # no answer in time → deny
 
 
 class Agent:
@@ -171,6 +178,9 @@ class Agent:
                 if self._config.enforce_budgets and self._config.cloud is not None
                 else None
             ),
+            hooks=self._config.hooks,
+            approver=self._config.approver,
+            approval_timeout_s=self._config.approval_timeout_s,
         )
 
     @property
