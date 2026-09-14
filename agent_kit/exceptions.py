@@ -100,3 +100,14 @@ class BudgetExceededError(AgentKitError):
         self.spent_usd = spent_usd
         self.budget_name = budget_name
         self.resets_at = resets_at
+
+
+class RunStoppedByHookError(AgentKitError):
+    """A hook stopped the run (before_llm deny, or a tool deny with stop_run=True)."""
+
+    def __init__(self, stage: str, reason: str, tool_name: str | None = None) -> None:
+        where = f" on '{tool_name}'" if tool_name else ""
+        super().__init__(f"Run stopped by {stage} hook{where}: {reason}")
+        self.stage = stage
+        self.reason = reason
+        self.tool_name = tool_name
