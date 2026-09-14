@@ -16,7 +16,7 @@ working plan to close that gap, in order.
 | Parallel tool calls | ✅ (Tier 1) | ✅ | ✅ |
 | MCP client | ❌ | ✅ | ✅ |
 | Typed / structured output | ❌ | ✅ | ✅ |
-| Approval gates / hooks | Allowlist only | ✅ | ✅ |
+| Approval gates / hooks | ✅ (2.3) | ✅ | ✅ |
 | Context management | Message-count window | ✅ | Partial |
 | Durable runs / resume | ❌ | Sessions | ✅ |
 | Sub-agents / handoffs | Static DAG | ✅ | ✅ |
@@ -57,7 +57,7 @@ Implementation plan: `docs/superpowers/plans/2026-09-13-tier1-harness-fundamenta
       allowlist enforcement applies unchanged.
 - [ ] **2.2 Typed results** — `agent.run(prompt, output_type=Model)` returns a validated Pydantic
       instance via provider structured outputs; fall back to schema-in-prompt + validation.
-- [ ] **2.3 Hooks + approval gates** — design: `specs/11-hooks-approval-gates.md`. `before_tool` / `after_tool` / `before_llm` hooks returning
+- [x] **2.3 Hooks + approval gates** — design: `specs/11-hooks-approval-gates.md`. `before_tool` / `after_tool` / `before_llm` hooks returning
       allow / deny / ask; `ask` pauses the run for an external decision. Extends `ToolRegistry`.
 - [ ] **2.4 Context management** — prompt-caching breakpoints, compaction/context-editing passthrough,
       thinking and effort settings on `AgentConfig`, token-based windowing.

@@ -20,6 +20,7 @@ demo — running agents you can trust, afford, and prove things about:
 | Tamper-evident audit chain | Hash-linked record of every LLM call and tool call; verify locally, re-verified server-side, JSONL/CSV export |
 | Cost per turn | Token- and cache-aware USD for current Claude and OpenAI models; unpriced models are logged, not silently $0 |
 | Cost circuit breaker | Per-run caps and daily / weekly / monthly fleet budgets stop agents before the next model call, and alert when tripped |
+| Hooks and approval gates | Block tools, require human approval, redact tool output, or stop runs — fail-closed, every decision audited |
 | Evidence bundles | Signed exports of audit chains that anyone can verify offline (`agent-kit verify`), with retention, legal holds, and signed deletion receipts |
 | Self-hostable ops backend | Fleet metrics, alerting (Slack, PagerDuty, webhook, SMTP), and SLA context — see [agent-kit Cloud](#agent-kit-cloud) |
 | Provider-neutral | Anthropic, OpenAI, Ollama, and any OpenAI-compatible endpoint behind one interface |
@@ -381,6 +382,48 @@ agent = Agent(
     # delete_file and send_email raise ToolNotAllowedError if the LLM tries to call them
 )
 ```
+
+---
+
+## Hooks and approval gates
+
+Put policy around what an agent does — deny tools, require a human, redact what tools return, or stop the run:
+
+```python
+from agent_kit.hooks import Decision, Hooks, deny_tools, require_approval
+
+async def approve(req):                      # Slack button, approvals API, terminal prompt…
+    return await slack.ask(f"Run {req.tool_name}({req.arguments})?")
+
+agent = Agent(
+    provider,
+    tools=[lookup_order, refund_order, close_account],
+    config=AgentConfig(
+        hooks=Hooks(
+            before_tool=[
+                deny_tools("close_account", reason="needs a human", stop_run=True),
+                require_approval("refund_order", reason="refunds move money"),
+            ],
+            after_tool=[redact_cards],        # return Decision.replace(masked_output)
+            before_llm=[stop_after_hours],    # return Decision.deny("outside business hours")
+        ),
+        approver=approve,
+        approval_timeout_s=300,              # no answer → deny
+    ),
+)
+```
+
+| Hook | Can return |
+|---|---|
+| `before_tool` | `allow` · `deny(reason, stop_run=False)` · `ask(reason)` |
+| `after_tool` | `allow` · `replace(output)` · `deny(reason)` |
+| `before_llm` | `allow` · `deny(reason)` (stops the run) |
+
+Hooks can be sync or async; returning `None` allows. **Everything else fails closed:** a hook that raises,
+an `ask` with no approver, a denied or timed-out approval — all deny. A denied tool call reaches the model
+as a tool error it can work around; `stop_run=True` raises `RunStoppedByHookError`. Every decision is an
+audit event (`tool_denied`, `approval_requested`, `approval_granted`, `approval_denied`,
+`tool_output_replaced`, `llm_call_denied`). Full example: [`examples/approval_gate.py`](examples/approval_gate.py).
 
 ---
 

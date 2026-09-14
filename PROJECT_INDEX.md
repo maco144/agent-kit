@@ -10,6 +10,7 @@ agent-kit/
 │   ├── agent/              # Core agent primitives
 │   │   ├── agent.py        # Agent + AgentConfig
 │   │   └── loop.py         # AgentLoop (turn execution engine)
+│   ├── hooks.py            # Hooks, Decision, approval requests, policy helpers
 │   ├── compliance.py       # verify_bundle / load_public_keys (offline evidence verification)
 │   ├── cli.py              # `agent-kit verify`
 │   ├── integrations/       # Report other harnesses to agent-kit Cloud
@@ -76,10 +77,10 @@ agent-kit/
 │   ├── migrations/         # Alembic versions 001–007
 │   ├── tests/              # 10 server test files + OTLP helpers
 │   └── pyproject.toml      # agentkit-cloud-server v0.1.0
-├── tests/                  # SDK tests (16 test files + conftest)
-├── examples/               # 8 example scripts + README
+├── tests/                  # SDK tests (17 test files + conftest)
+├── examples/               # 9 example scripts + README
 ├── docs/                   # 4 cloud documentation files
-├── specs/                  # 11 spec files (00–10)
+├── specs/                  # 12 spec files (00–11)
 └── pyproject.toml          # SDK build config + deps
 ```
 
@@ -240,6 +241,7 @@ Managed by Alembic (`server/migrations/versions/`):
 | `specs/03-alerting.md` | Alerting rules, channels, evaluator (spec implemented) |
 | `specs/04-sla-support.md` | SLA-backed support context API (spec implemented) |
 | `specs/05-dashboard-ui.md` | Dashboard UI design spec |
+| `specs/11-hooks-approval-gates.md` | before_tool / after_tool / before_llm hooks with approvals (implemented) |
 | `specs/10-compliance-exports.md` | Signed evidence bundles, retention, legal holds, deletion receipts (implemented) |
 | `specs/09-cost-circuit-breaker.md` | Per-run caps + fleet budgets with enforcement and alerts (implemented) |
 | `specs/08-otlp-ingest.md` | OTLP trace ingest for GenAI semconv + OpenInference (implemented) |
@@ -265,6 +267,7 @@ Managed by Alembic (`server/migrations/versions/`):
 | `test_memory_window.py` | Tool-safe memory trimming, SQLite tool_calls persistence + migration |
 | `test_budgets.py` | Per-run caps, BudgetGuard caching / local spend / fail-open, fleet enforcement |
 | `test_compliance.py` | Offline bundle verification (tampering, wrong keys, receipts) and CLI exit codes |
+| `test_hooks.py` | Hook decisions, approvals (grant/deny/timeout/error), output replacement, stop_run, audit events |
 | `test_integrations_recorder.py` | RunRecorder lifecycle, deferred run_start, cost reconciliation, chain integrity |
 | `test_integrations_claude.py` | Claude Agent SDK adapter (fakes + real SDK types) |
 | `test_integrations_openai_agents.py` | OpenAI Agents SDK adapter via real `agents.tracing` |

@@ -1,6 +1,6 @@
 # Spec 11 — Hooks and Approval Gates
 
-Status: **approved design** · Written 2026-09-14 · Roadmap item: 2.3 (`specs/06-harness-roadmap.md`)
+Status: **implemented** · Written 2026-09-14 · Roadmap item: 2.3 (`specs/06-harness-roadmap.md`)
 
 ## Goal
 
