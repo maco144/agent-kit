@@ -129,6 +129,9 @@ Dependency floors rise to what these parameters need: `anthropic>=1.0`, `openai>
    - `format` is kept only for `date-time`, `time`, `date`, `duration`, `email`, `hostname`, `uri`,
      `ipv4`, `ipv6`, `uuid`; any other format moves to the description the same way;
    - `oneOf` becomes `anyOf` and `discriminator` is removed (Pydantic's discriminated unions);
+   - for native-compatible schemas, a `$ref` with sibling keys (Pydantic emits `{"$ref": …,
+     "description": …}` for described model fields) is replaced by the referenced definition merged
+     with those keys — strict mode rejects `$ref` siblings;
    - `title` is removed.
 4. **`native_compatible = False`** when the schema contains, anywhere: an object whose
    `additionalProperties` is `true` or a schema (open dicts — `dict[str, X]` not at the root), or a
@@ -218,8 +221,9 @@ The raw output is not placed in audit payloads.
   the schema, no `output_schema` kwarg); `native_compatible=False` forces prompt mode on a native
   provider; `stream()` parity with `last_result.parsed`; `output_type` absent from hook context; untyped
   runs pass no `output_schema`; `agent_complete.output_type`.
-- **Live** (when `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` are set, outside CI): a typed run with a tool
-  against each real API.
+- **Live** (outside CI): a typed run with a tool against local Ollama (`llama3.2`, native
+  `response_format`), plus prompt mode on the same model; against the Anthropic and OpenAI APIs when
+  `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` are set.
 
 ## Out of scope
 
