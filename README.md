@@ -449,6 +449,30 @@ CloudReporter(
 
 See [`docs/cloud-quickstart.md`](docs/cloud-quickstart.md) to get started, or [`docs/self-hosting.md`](docs/self-hosting.md) to run the backend yourself.
 
+### Already on another harness?
+
+Keep it. Adapters report Claude Agent SDK and OpenAI Agents SDK runs — turns, tool calls,
+subagents, handoffs, guardrails, cost — to the same audit trail, fleet dashboard, and alerts. The
+audit chain is built on your machine, and nothing changes on the server:
+
+```python
+# Claude Agent SDK — pip install agent-kit[claude-agent-sdk]
+from agent_kit.integrations.claude_agent_sdk import ClaudeAgentObserver
+
+observer = ClaudeAgentObserver(CloudReporter(project="support"))
+options = observer.with_hooks(ClaudeAgentOptions(allowed_tools=["Read", "Grep"]))
+async for message in observer.observe(query(prompt=prompt, options=options), prompt=prompt):
+    ...  # messages arrive unchanged
+
+# OpenAI Agents SDK — pip install agent-kit[openai-agents]
+from agent_kit.integrations.openai_agents import AgentKitTraceProcessor
+
+add_trace_processor(AgentKitTraceProcessor(CloudReporter(project="support")))
+```
+
+Runnable versions: [`examples/claude_agent_sdk_monitored.py`](examples/claude_agent_sdk_monitored.py),
+[`examples/openai_agents_monitored.py`](examples/openai_agents_monitored.py).
+
 ---
 
 ## License

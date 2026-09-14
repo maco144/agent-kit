@@ -1,6 +1,6 @@
 # Spec 07 — Harness Adapters: Claude Agent SDK + OpenAI Agents SDK
 
-Status: **approved design** · Written 2026-09-13 · Roadmap item: 3.1 (`specs/06-harness-roadmap.md`)
+Status: **implemented** · Written 2026-09-13 · Roadmap item: 3.1 (`specs/06-harness-roadmap.md`)
 
 ## Goal
 
@@ -52,7 +52,8 @@ OpenAI Agents SDK ── TracingProcessor ──┘        │
 class RunRecorder:
     def __init__(self, reporter: CloudReporter, harness: str, agent_name: str | None = None) -> None: ...
 
-    def start(self, run_id: str, model: str | None, prompt: str | None, metadata: dict[str, Any] | None = None) -> None
+    def start(self, run_id: str, model: str | None, prompt: str | None, metadata: dict[str, Any] | None = None,
+              agent_name: str | None = None) -> None
     def llm_turn(self, run_id: str, model: str | None, input_tokens: int, output_tokens: int,
                  cache_read_tokens: int = 0, cache_write_tokens: int = 0,
                  tool_names: list[str] | None = None, duration_ms: int = 0) -> None
@@ -71,8 +72,8 @@ class RunRecorder:
   whichever comes first.
 - `num_turns=None` on `complete` means the recorder's own count of `llm_turn` calls.
 - All state is guarded by one lock; callbacks may arrive from any thread.
-- `agent_name` falls back to the reporter's `agent_name`, then to a harness-supplied name (OpenAI
-  workflow name, Claude `"claude-agent"`).
+- Agent name precedence: the reporter's `agent_name`, then `start(agent_name=...)` (OpenAI workflow
+  name), then the recorder default (Claude `"claude-agent"`, otherwise the harness name).
 - Audit event types: `agent_start`, `llm_complete`, `tool_call`, plus harness-specific
   `subagent_start`, `subagent_stop`, `context_compaction`, `handoff`, `guardrail`, then
   `agent_complete` / `agent_error`. Payloads mirror the native loop (`call_id`, `success`, `error`,
@@ -116,12 +117,14 @@ Hook callbacks return `{}` (no decision, no output change) and swallow their own
 
 ## OpenAI Agents SDK mapping
 
-Correlation key: `trace_id` = `run_id`.
+Correlation key: `run_id = uuid5(namespace, trace_id)`. Agents SDK trace IDs (`trace_<32 hex>`, 38
+characters) don't fit the server's `String(36)` run ID columns; the raw `trace_id` goes in run
+metadata.
 
 | Source | Recorder call |
 |---|---|
 | `on_trace_start(trace)` | `start(model=None, prompt=None, metadata={"workflow": trace.name, "group_id": ...})`; agent name defaults to `trace.name` |
-| `on_span_end` — `ResponseSpanData` | `llm_turn(model=response.model, usage.input_tokens, usage.output_tokens, cached input tokens)` |
+| `on_span_end` — `ResponseSpanData` | `llm_turn(model=response.model, usage.input_tokens, usage.output_tokens)` — OpenAI `input_tokens` already include cached tokens, so no cache split |
 | `on_span_end` — `GenerationSpanData` | `llm_turn(model, usage["input_tokens"], usage["output_tokens"])` |
 | `on_span_end` — `FunctionSpanData` | `tool_call(span_id, name, success=span.error is None, error=span.error message, duration from started_at/ended_at)` |
 | `on_span_end` — `HandoffSpanData` | `audit("handoff", actor=from_agent, {to_agent})` |

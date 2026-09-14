@@ -10,6 +10,10 @@ agent-kit/
 │   ├── agent/              # Core agent primitives
 │   │   ├── agent.py        # Agent + AgentConfig
 │   │   └── loop.py         # AgentLoop (turn execution engine)
+│   ├── integrations/       # Report other harnesses to agent-kit Cloud
+│   │   ├── recorder.py     # RunRecorder (harness-neutral runs + audit chain)
+│   │   ├── claude_agent_sdk.py  # ClaudeAgentObserver (hooks + message stream)
+│   │   └── openai_agents.py     # AgentKitTraceProcessor (tracing spans)
 │   ├── cloud/              # Cloud reporting SDK module
 │   │   ├── models.py       # CloudEvent, EventType
 │   │   └── reporter.py     # CloudReporter (batched, fire-and-forget)
@@ -59,10 +63,10 @@ agent-kit/
 │   ├── migrations/         # Alembic versions 001–004
 │   ├── tests/              # 4 server test files
 │   └── pyproject.toml      # agentkit-cloud-server v0.1.0
-├── tests/                  # SDK tests (11 test files + conftest)
-├── examples/               # 6 example scripts + README
+├── tests/                  # SDK tests (14 test files + conftest)
+├── examples/               # 8 example scripts + README
 ├── docs/                   # 4 cloud documentation files
-├── specs/                  # 7 spec files (00–06)
+├── specs/                  # 8 spec files (00–07)
 └── pyproject.toml          # SDK build config + deps
 ```
 
@@ -210,6 +214,7 @@ Managed by Alembic (`server/migrations/versions/`):
 | `specs/03-alerting.md` | Alerting rules, channels, evaluator (spec implemented) |
 | `specs/04-sla-support.md` | SLA-backed support context API (spec implemented) |
 | `specs/05-dashboard-ui.md` | Dashboard UI design spec |
+| `specs/07-harness-adapters.md` | Claude Agent SDK + OpenAI Agents SDK adapters (implemented) |
 | `specs/06-harness-roadmap.md` | Harness roadmap: Tier 1 fundamentals (done), Tier 2 parity, Tier 3 differentiators |
 
 ## 🧪 Test Coverage
@@ -229,6 +234,9 @@ Managed by Alembic (`server/migrations/versions/`):
 | `test_cloud_reporter.py` | CloudReporter batching + HTTP shipping |
 | `test_provider_requests.py` | Exact Anthropic/OpenAI request payloads via fake clients; pricing; streaming |
 | `test_memory_window.py` | Tool-safe memory trimming, SQLite tool_calls persistence + migration |
+| `test_integrations_recorder.py` | RunRecorder lifecycle, deferred run_start, cost reconciliation, chain integrity |
+| `test_integrations_claude.py` | Claude Agent SDK adapter (fakes + real SDK types) |
+| `test_integrations_openai_agents.py` | OpenAI Agents SDK adapter via real `agents.tracing` |
 | `conftest.py` | Shared fixtures |
 
 ### Server Tests (`server/tests/`)

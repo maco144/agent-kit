@@ -134,6 +134,34 @@ See [`self-hosting.md`](self-hosting.md) for deployment instructions.
 
 ---
 
+## Other harnesses
+
+Already running the Claude Agent SDK or the OpenAI Agents SDK? Report those runs without
+switching:
+
+```python
+# Claude Agent SDK — pip install agent-kit[claude-agent-sdk]
+from agent_kit.integrations.claude_agent_sdk import ClaudeAgentObserver
+
+observer = ClaudeAgentObserver(CloudReporter(project="support"))
+options = observer.with_hooks(ClaudeAgentOptions(allowed_tools=["Read", "Grep"]))
+async for message in observer.observe(query(prompt=prompt, options=options), prompt=prompt):
+    ...  # messages arrive unchanged
+
+# OpenAI Agents SDK — pip install agent-kit[openai-agents]
+from agent_kit.integrations.openai_agents import AgentKitTraceProcessor
+
+add_trace_processor(AgentKitTraceProcessor(CloudReporter(project="support")))
+```
+
+- Each Claude `observe()` call and each OpenAI trace is one run. Runs carry `harness` (`claude-agent-sdk` / `openai-agents`) in their `run_start` payload.
+- Claude cost is the SDK's own `total_cost_usd`; OpenAI cost comes from agent-kit's pricing tables.
+- Claude hooks without `observe()` record nothing — cost and completion come from the message stream.
+- The OpenAI processor records nothing while Agents SDK tracing is disabled. OpenAI's own trace exporter keeps running alongside it.
+- Adapters only observe: they never block tools, change outputs, or raise into your agent.
+
+---
+
 ## What is NOT sent to the cloud
 
 - LLM prompt text or output content (only a SHA-256 hash of the prompt)

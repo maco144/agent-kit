@@ -15,6 +15,8 @@ python examples/hello_agent.py
 | [`multi_tool_agent.py`](multi_tool_agent.py) | 54 | The `@tool` decorator with several tools and console tracing. Calls live public APIs (CoinGecko), so no second key is needed. | API key |
 | [`research_dag.py`](research_dag.py) | 85 | `DAGOrchestrator` — three researchers run concurrently, a fourth synthesizes. Prints the wall-clock speedup over sequential execution. | API key |
 | [`safe_agent.py`](safe_agent.py) | 111 | The production posture: tool allowlisting, the tamper-evident Merkle audit chain, chain verification, and JSONL export for compliance. | API key |
+| [`claude_agent_sdk_monitored.py`](claude_agent_sdk_monitored.py) | 31 | A Claude Agent SDK run reported to agent-kit Cloud through hooks and the message stream. | `pip install agent-kit[claude-agent-sdk]`; Claude Code auth; `AGENTKIT_API_KEY` |
+| [`openai_agents_monitored.py`](openai_agents_monitored.py) | 33 | An OpenAI Agents SDK run reported to agent-kit Cloud through a trace processor. | `pip install agent-kit[openai-agents]`; `OPENAI_API_KEY`; `AGENTKIT_API_KEY` |
 | [`cloud_monitored.py`](cloud_monitored.py) | 148 | Full fleet observability — `CloudReporter` shipping lifecycle events to agent-kit Cloud, plus circuit breaker config and per-run cost attribution. Runs locally with cloud reporting off when `AGENTKIT_API_KEY` is unset. | API key; cloud optional |
 
 ## Notes

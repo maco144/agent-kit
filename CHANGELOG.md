@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 
 ## [Unreleased]
 
+### Added
+- **Harness adapters for agent-kit Cloud.** `agent_kit.integrations.claude_agent_sdk.ClaudeAgentObserver` and `agent_kit.integrations.openai_agents.AgentKitTraceProcessor` report Claude Agent SDK and OpenAI Agents SDK runs — turns, tool calls, subagents, handoffs, guardrails, and cost — to the existing server, with the audit chain built client-side. Claude runs use the SDK's reported cost; OpenAI runs are priced from agent-kit's tables. New extras: `claude-agent-sdk`, `openai-agents`. See `specs/07-harness-adapters.md`.
+- `CloudReporter.submit_threadsafe(event)` for synchronous callers on any thread, plus `CloudReporter.project` / `agent_name`.
+
 ## [0.3.0] — 2026-09-13
 
 Tool-using agents work end to end. In 0.2.0 every agent that called a tool failed on the following

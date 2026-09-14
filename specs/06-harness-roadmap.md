@@ -66,10 +66,10 @@ Implementation plan: `docs/superpowers/plans/2026-09-13-tier1-harness-fundamenta
 
 ## Tier 3 — Wedge (what only we offer)
 
-- [ ] **3.1 Harness-agnostic Cloud** — design: `specs/07-harness-adapters.md` (Python SDK adapters
-      first; OTLP ingest follows as 3.1b). Ingest OpenTelemetry GenAI spans plus adapters for Claude Agent
-      SDK hooks and OpenAI Agents SDK tracing, so teams keep their harness and still get audit,
-      fleet metrics, alerts, and SLA context. Every competing harness becomes a funnel.
+- [x] **3.1a Harness adapters** — Claude Agent SDK and OpenAI Agents SDK runs report to Cloud with a
+      client-side audit chain and no server change (`specs/07-harness-adapters.md`).
+- [ ] **3.1b OTLP ingest** — accept OpenTelemetry GenAI spans so harnesses in any language (TypeScript
+      included) reach audit, fleet metrics, alerts, and SLA context; chain built at ingest.
 - [ ] **3.2 Cost circuit breaker** — per-run and per-org dollar ceilings that trip like the failure
       breaker and fire an alert. Reuses the breaker, cost tracking, and alerting already built.
 - [ ] **3.3 Compliance exports** — package the hash-chained audit and server-side verification as
