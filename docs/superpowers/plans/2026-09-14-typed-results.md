@@ -190,8 +190,9 @@ def test_name_sanitised():
 
 def test_parse_accepts_fences():
     spec = OutputSpec.from_type(Point)
-    assert spec.parse('```json\n{"x": 1}\n```') == Point(x=1)
-    assert spec.parse('  ```\n{"x": 2}\n```  ') == Point(x=2)
+    fence = "`" * 3
+    assert spec.parse(f'{fence}json\n{{"x": 1}}\n{fence}') == Point(x=1)
+    assert spec.parse(f'  {fence}\n{{"x": 2}}\n{fence}  ') == Point(x=2)
 
 
 def test_parse_errors():
@@ -254,7 +255,8 @@ _CONSTRAINT_KEYS = frozenset(
 _SUPPORTED_FORMATS = frozenset(
     {"date-time", "time", "date", "duration", "email", "hostname", "uri", "ipv4", "ipv6", "uuid"}
 )
-_FENCE = re.compile(r"^```[A-Za-z0-9_-]*\s*\n(.*)\n```$", re.DOTALL)
+_TICKS = "`" * 3
+_FENCE = re.compile(rf"^{_TICKS}[A-Za-z0-9_-]*\s*\n(.*)\n{_TICKS}$", re.DOTALL)
 _MAX_ERROR_LINES = 20
 
 
