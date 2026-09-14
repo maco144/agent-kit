@@ -25,7 +25,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install
-        run: pip install -e ".[dev,openai,otel,claude-agent-sdk,openai-agents,compliance]"
+        run: pip install -e ".[dev,openai,otel,claude-agent-sdk,openai-agents,compliance,mcp]"
       - name: Lint
         run: ruff check agent_kit tests
       - name: Type-check

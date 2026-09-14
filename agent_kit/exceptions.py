@@ -111,3 +111,11 @@ class RunStoppedByHookError(AgentKitError):
         self.stage = stage
         self.reason = reason
         self.tool_name = tool_name
+
+
+class MCPConnectionError(AgentKitError):
+    """A required MCP server could not be connected, or its tools could not be registered."""
+
+
+class MCPToolError(AgentKitError):
+    """An MCP tool call failed; surfaced to the model as a tool error."""

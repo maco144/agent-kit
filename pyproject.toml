@@ -32,7 +32,8 @@ otel             = ["opentelemetry-api>=1.24", "opentelemetry-sdk>=1.24"]
 claude-agent-sdk = ["claude-agent-sdk>=0.2"]
 openai-agents    = ["openai-agents>=0.22"]
 compliance       = ["cryptography>=41"]
-all              = ["agent-kit[openai,ollama,otel,claude-agent-sdk,openai-agents,compliance]"]
+mcp              = ["mcp>=2.0"]
+all              = ["agent-kit[openai,ollama,otel,claude-agent-sdk,openai-agents,compliance,mcp]"]
 dev     = [
     "pytest>=8",
     "pytest-asyncio>=0.23",

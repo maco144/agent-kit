@@ -6,7 +6,7 @@
 
 **Architecture:** One module, `agent_kit/tools/mcp.py`. Servers connect sequentially on enter, each inside its own `AsyncExitStack` that joins the toolset's stack only on success (so a skipped server leaves nothing open). Every listed MCP tool becomes a `Tool` whose function calls `ClientSession.call_tool` and maps the result; failures raise `MCPToolError`, which the existing `Tool` wrapper turns into `ToolResult.error`.
 
-**Tech Stack:** `mcp>=2.0` (ClientSession, stdio_client, streamable_http_client, create_mcp_http_client), anyio (`fail_after`), httpx2, pytest + pytest-asyncio (auto), uvicorn (fixture HTTP server).
+**Tech Stack:** `mcp>=2.0` (ClientSession, stdio_client, streamable_http_client), anyio (`fail_after`), httpx2, pytest + pytest-asyncio (auto), uvicorn (fixture HTTP server).
 
 **Spec:** `specs/12-mcp-client.md`
 
