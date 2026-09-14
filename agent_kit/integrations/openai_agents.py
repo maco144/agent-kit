@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 try:
+    from agents import RunHooks
     from agents.tracing import TracingProcessor
 except ImportError as e:
     raise ImportError(
@@ -29,9 +30,11 @@ except ImportError as e:
         "Install it with: pip install agent-kit[openai-agents]"
     ) from e
 
-from agent_kit.integrations.recorder import RunRecorder
+from agent_kit.exceptions import BudgetExceededError
+from agent_kit.integrations.recorder import RunRecorder, price_call
 
 if TYPE_CHECKING:
+    from agents import Agent, ModelResponse, RunContextWrapper, TResponseInputItem
     from agents.tracing import Span, Trace
 
     from agent_kit.cloud.reporter import CloudReporter
@@ -158,3 +161,65 @@ class AgentKitTraceProcessor(TracingProcessor):
         elif kind == "agent" and span.error:
             with self._lock:
                 self._agent_errors[span.trace_id] = span.error.get("message") or "agent error"
+
+
+def _model_name(agent: Any) -> str:
+    model = getattr(agent, "model", None)
+    if isinstance(model, str):
+        return model
+    name = getattr(model, "model", None)
+    return name if isinstance(name, str) else ""
+
+
+class AgentKitRunHooks(RunHooks[Any]):
+    """
+    Enforce agent-kit cost ceilings on OpenAI Agents SDK runs.
+
+        Runner.run(agent, input, hooks=AgentKitRunHooks(reporter, max_run_cost_usd=2.0))
+
+    Raises BudgetExceededError from on_llm_start — before the model is called — when the
+    run's spend reaches ``max_run_cost_usd`` or a fleet budget covering the agent is
+    exhausted. Set CloudReporter(agent_name=...) so budgets and reported runs share a name.
+    """
+
+    def __init__(
+        self,
+        reporter: CloudReporter,
+        agent_name: str | None = None,
+        max_run_cost_usd: float | None = None,
+        enforce_budgets: bool = True,
+    ) -> None:
+        self._reporter = reporter
+        self._agent_name = agent_name
+        self._max_run_cost_usd = max_run_cost_usd
+        self._guard = reporter.budget_guard() if enforce_budgets else None
+
+    def _name(self, agent: Any) -> str:
+        return self._reporter.agent_name or self._agent_name or str(getattr(agent, "name", "") or "agent")
+
+    async def on_llm_start(
+        self,
+        context: RunContextWrapper[Any],
+        agent: Agent[Any],
+        system_prompt: str | None,
+        input_items: list[TResponseInputItem],
+    ) -> None:
+        if self._max_run_cost_usd is not None:
+            usage = context.usage
+            spent = price_call(_model_name(agent), int(usage.input_tokens or 0), int(usage.output_tokens or 0))
+            if spent >= self._max_run_cost_usd:
+                raise BudgetExceededError(scope="run", limit_usd=self._max_run_cost_usd, spent_usd=spent)
+        if self._guard is not None:
+            await self._guard.check(self._name(agent), self._reporter.project)
+
+    async def on_llm_end(
+        self, context: RunContextWrapper[Any], agent: Agent[Any], response: ModelResponse
+    ) -> None:
+        if self._guard is None:
+            return
+        try:
+            usage = response.usage
+            cost = price_call(_model_name(agent), int(usage.input_tokens or 0), int(usage.output_tokens or 0))
+            self._guard.record_spend(self._name(agent), self._reporter.project, cost)
+        except Exception:
+            logger.debug("AgentKitRunHooks.on_llm_end failed", exc_info=True)

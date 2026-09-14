@@ -9,7 +9,12 @@ import pytest
 
 tracing = pytest.importorskip("agents.tracing")
 
-from agent_kit.integrations.openai_agents import AgentKitTraceProcessor, run_id_for_trace  # noqa: E402
+from agent_kit.exceptions import BudgetExceededError  # noqa: E402
+from agent_kit.integrations.openai_agents import (  # noqa: E402
+    AgentKitRunHooks,
+    AgentKitTraceProcessor,
+    run_id_for_trace,
+)
 
 
 @pytest.fixture
@@ -104,3 +109,75 @@ def test_processor_never_raises_on_malformed_spans(cloud_capture):
     proc.shutdown()
     proc.force_flush()
     assert cloud_capture.events == []
+
+
+class GuardStub:
+    def __init__(self, tripped: bool) -> None:
+        self.tripped = tripped
+        self.checks: list[tuple[str, str]] = []
+        self.spend: list[float] = []
+
+    async def check(self, agent_name: str, project: str) -> None:
+        self.checks.append((agent_name, project))
+        if self.tripped:
+            raise BudgetExceededError(scope="budget", limit_usd=1.0, spent_usd=1.2, budget_name="openai daily")
+
+    def record_spend(self, agent_name: str, project: str, usd: float) -> None:
+        self.spend.append(usd)
+
+
+def _never_called_model():
+    from agents.models.interface import Model
+
+    class NeverCalled(Model):
+        async def get_response(self, *args, **kwargs):
+            raise AssertionError("model must not be called when the budget is exhausted")
+
+        def stream_response(self, *args, **kwargs):
+            raise AssertionError("model must not be called when the budget is exhausted")
+
+    return NeverCalled()
+
+
+async def test_run_hooks_stop_runner_before_model_call(cloud_capture):
+    from agents import Agent as OAIAgent
+    from agents import RunConfig, Runner
+
+    guard = GuardStub(tripped=True)
+    cloud_capture.reporter._budget_guard = guard
+    hooks = AgentKitRunHooks(cloud_capture.reporter, agent_name="support")
+
+    with pytest.raises(BudgetExceededError) as info:
+        await Runner.run(
+            OAIAgent(name="support", instructions="x", model=_never_called_model()),
+            "hi",
+            hooks=hooks,
+            run_config=RunConfig(tracing_disabled=True),
+        )
+
+    assert info.value.budget_name == "openai daily"
+    assert guard.checks == [("support", "proj")]
+
+
+async def test_run_hooks_per_run_cap_from_context_usage(cloud_capture):
+    hooks = AgentKitRunHooks(cloud_capture.reporter, max_run_cost_usd=0.01, enforce_budgets=False)
+    context = NS(usage=NS(input_tokens=2000, output_tokens=1000))  # gpt-4o: $0.015
+    agent = NS(name="a", model="gpt-4o")
+
+    with pytest.raises(BudgetExceededError) as info:
+        await hooks.on_llm_start(context, agent, None, [])
+    assert (info.value.scope, info.value.spent_usd) == ("run", pytest.approx(0.015))
+
+    await AgentKitRunHooks(cloud_capture.reporter, max_run_cost_usd=1.0, enforce_budgets=False).on_llm_start(context, agent, None, [])
+
+
+async def test_run_hooks_record_spend_on_llm_end(cloud_capture):
+    guard = GuardStub(tripped=False)
+    cloud_capture.reporter._budget_guard = guard
+    hooks = AgentKitRunHooks(cloud_capture.reporter)
+    agent = NS(name="support", model=NS(model="gpt-4o-mini"))
+
+    await hooks.on_llm_start(NS(usage=NS(input_tokens=0, output_tokens=0)), agent, None, [])
+    await hooks.on_llm_end(NS(), agent, NS(usage=NS(input_tokens=1_000_000, output_tokens=0)))
+
+    assert guard.spend == [pytest.approx(0.15)]

@@ -36,7 +36,11 @@ class _Run:
 
 
 def price_call(
-    model: str | None, input_tokens: int, output_tokens: int, cache_read: int, cache_write: int
+    model: str | None,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read: int = 0,
+    cache_write: int = 0,
 ) -> float:
     """USD for one model call from agent-kit's pricing tables; 0.0 when unpriced."""
     if not model:
