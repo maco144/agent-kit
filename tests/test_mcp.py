@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import socket
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +20,7 @@ from agent_kit.hooks import ApprovalRequest, Hooks  # noqa: E402
 from agent_kit.providers.base import ProviderConfig  # noqa: E402
 from agent_kit.tools.mcp import (  # noqa: E402
     MCPToolset,
+    http,
     require_approval_unless_read_only,
     stdio,
 )
@@ -209,3 +213,29 @@ async def test_exit_terminates_server_and_disables_tools(tmp_path):
 
     assert not alive(pid)
     assert (await echo(call_id="late", text="hi")).error == "MCP toolset is closed"
+
+
+@pytest.fixture
+def http_fixture_server():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    proc = subprocess.Popen([sys.executable, FIXTURE, "http", str(port)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        with socket.socket() as probe:
+            if probe.connect_ex(("127.0.0.1", port)) == 0:
+                break
+        time.sleep(0.1)
+    else:
+        proc.kill()
+        pytest.fail("fixture HTTP MCP server did not start")
+    yield f"http://127.0.0.1:{port}/mcp"
+    proc.terminate()
+    proc.wait(timeout=10)
+
+
+async def test_streamable_http_server(http_fixture_server):
+    async with MCPToolset(http("remote", http_fixture_server, headers={"X-Test": "1"})) as mcp:
+        assert "remote__inventory" in {t.schema.name for t in mcp.tools}
+        assert (await call(mcp, "remote__inventory", sku="Z9")).output == {"sku": "Z9", "count": 3}
