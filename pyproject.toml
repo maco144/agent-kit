@@ -31,7 +31,8 @@ ollama           = []        # uses httpx (already core); listed for discoverabi
 otel             = ["opentelemetry-api>=1.24", "opentelemetry-sdk>=1.24"]
 claude-agent-sdk = ["claude-agent-sdk>=0.2"]
 openai-agents    = ["openai-agents>=0.22"]
-all              = ["agent-kit[openai,ollama,otel,claude-agent-sdk,openai-agents]"]
+compliance       = ["cryptography>=41"]
+all              = ["agent-kit[openai,ollama,otel,claude-agent-sdk,openai-agents,compliance]"]
 dev     = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
@@ -39,6 +40,9 @@ dev     = [
     "ruff>=0.15,<0.17",
     "mypy>=1.9",
 ]
+
+[project.scripts]
+agent-kit = "agent_kit.cli:main"
 
 [project.urls]
 Homepage   = "https://github.com/maco144/agent-kit"
