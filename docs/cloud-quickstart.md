@@ -162,6 +162,24 @@ add_trace_processor(AgentKitTraceProcessor(CloudReporter(project="support")))
 
 ---
 
+## Any OpenTelemetry-instrumented agent
+
+If your framework already emits OpenTelemetry traces — in any language — point its OTLP/HTTP exporter at agent-kit. No agent-kit SDK needed:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://ingest.agentkit.io
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer akt_live_..."
+export OTEL_RESOURCE_ATTRIBUTES="agentkit.project=support"
+```
+
+- Understood conventions: OpenTelemetry GenAI semantic conventions (`gen_ai.*`) and OpenInference (`openinference.span.kind`). Other spans in the same traces are ignored.
+- Each trace becomes one run with turns, tool calls, tokens, cost, and failures in the fleet dashboard.
+- Runs complete when the trace's root span arrives, or after 5 minutes without new spans (for exporters that drop non-GenAI spans).
+- These runs show `chain_origin: "ingest"`: the audit chain is built when spans arrive, so it proves nothing changed after ingest — not what happened before export. Use the SDK or a harness adapter for source-side tamper evidence.
+- Prompt, completion, and tool content attributes are never stored.
+
+---
+
 ## What is NOT sent to the cloud
 
 - LLM prompt text or output content (only a SHA-256 hash of the prompt)

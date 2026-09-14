@@ -63,6 +63,35 @@ Payload shapes by `event_type`:
 
 ---
 
+### POST /v1/traces
+
+OTLP/HTTP trace export. Any OpenTelemetry-instrumented agent can report here with a standard exporter — no agent-kit SDK:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://ingest.agentkit.io
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer akt_live_..."
+export OTEL_RESOURCE_ATTRIBUTES="agentkit.project=support"
+```
+
+- `Content-Type: application/x-protobuf` or `application/json`; `Content-Encoding: gzip` optional.
+- Spans following the OpenTelemetry GenAI semantic conventions (`gen_ai.operation.name`) or OpenInference (`openinference.span.kind`) become runs — one trace, one run. Other spans are accepted and ignored.
+- `chat` / `generate_content` / `text_completion` / `LLM` spans are turns (tokens, cost); `execute_tool` / `TOOL` spans are tool calls; `invoke_agent` / `invoke_workflow` / `AGENT` / `CHAIN` spans name the run.
+- Project comes from the `agentkit.project` resource attribute (default `default`); agent name from the outermost agent span, else `service.name`.
+- A run completes when the trace's root span arrives, or after 5 minutes without new spans. A failed root span or outermost agent span records a run error; failed tool spans don't.
+- The audit chain is built at ingest, so these runs report `"chain_origin": "ingest"`.
+- Prompt, completion, and tool argument/result content on spans is never stored.
+
+**Response** `200 OK` — `ExportTraceServiceResponse` in the request's encoding. Malformed spans are reported in `partial_success.rejected_spans` (JSON: `partialSuccess.rejectedSpans`).
+
+| Status | Meaning |
+|---|---|
+| `400` | Body isn't a decodable OTLP export |
+| `401` | Missing or invalid API key |
+| `415` | Content type other than protobuf or JSON |
+| `503` | Concurrent write to the same run — exporters retry automatically |
+
+---
+
 ## Audit
 
 ### GET /v1/audit/runs
@@ -92,6 +121,7 @@ List audit runs for the org.
       "started_at": "2026-03-12T14:00:00",
       "completed_at": "2026-03-12T14:00:45",
       "integrity": "verified",
+      "chain_origin": "client",
       "final_root_hash": "abc123..."
     }
   ],
@@ -99,6 +129,8 @@ List audit runs for the org.
   "total": 142
 }
 ```
+
+`chain_origin` is `client` when the audit chain was built by the agent-kit SDK (tamper-evident from the agent) and `ingest` when it was built from OTLP spans at `POST /v1/traces` (tamper-evident from ingest onward).
 
 ---
 

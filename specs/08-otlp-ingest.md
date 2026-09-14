@@ -1,6 +1,6 @@
 # Spec 08 — OTLP Trace Ingest
 
-Status: **approved design** · Written 2026-09-13 · Roadmap item: 3.1b (`specs/06-harness-roadmap.md`)
+Status: **implemented** · Written 2026-09-13 · Roadmap item: 3.1b (`specs/06-harness-roadmap.md`)
 
 ## Goal
 
@@ -71,7 +71,7 @@ audit_runs / audit_events (chain_origin = "ingest") · background verification �
 | `server/app/otlp/assembler.py` | `async assemble(spans: list[RawSpan], org_id: str, db) -> AssembleResult`: finalizes idle runs, then groups spans by trace and applies the lifecycle below. |
 | `server/app/audit_chain.py` | Gains `append_event(db, run, event_type, actor, payload, timestamp)` — computes `payload_hash` / `leaf_hash` from the run's current root and inserts the next `AuditEvent`. |
 | `server/app/routers/otlp.py` | The endpoint: content negotiation, auth, decode, assemble, commit, response encoding, background verification. |
-| `server/migrations/versions/005_otlp_ingest.py` | `audit_runs.chain_origin VARCHAR(16) NOT NULL DEFAULT 'client'`; `active_run_cache.last_event_at DATETIME NULL`. |
+| `server/migrations/versions/005_otlp_ingest.py` | `audit_runs.chain_origin VARCHAR(16) NOT NULL DEFAULT 'client'`; `active_run_cache.last_event_at DATETIME NULL`; `active_run_cache.failure_message VARCHAR(500) NULL` (the outermost agent span's failure, kept until the run completes). |
 | `server/app/schemas.py` | `AuditRunSummary.chain_origin`. |
 
 ## Span mapping
