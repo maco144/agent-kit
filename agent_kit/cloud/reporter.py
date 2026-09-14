@@ -14,6 +14,7 @@ import httpx
 from agent_kit.cloud.models import CloudEvent, EventType
 
 if TYPE_CHECKING:
+    from agent_kit.cloud.budgets import BudgetGuard
     from agent_kit.types import AgentResult, AuditEventRecord, Turn
 
 logger = logging.getLogger("agent_kit.cloud")
@@ -73,6 +74,7 @@ class CloudReporter:
         self._flush_task: asyncio.Task[None] | None = None
         self._http: httpx.AsyncClient | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._budget_guard: BudgetGuard | None = None
 
         import atexit
         atexit.register(self._flush_sync)
@@ -84,6 +86,24 @@ class CloudReporter:
     @property
     def agent_name(self) -> str:
         return self._agent_name
+
+    @property
+    def api_key(self) -> str:
+        return self._api_key
+
+    @property
+    def base_url(self) -> str:
+        return self._base_url
+
+    def budget_guard(self, refresh_interval_s: float = 30.0, fail_closed: bool = False) -> BudgetGuard:
+        """The reporter's shared BudgetGuard, created on first use with these settings."""
+        if self._budget_guard is None:
+            from agent_kit.cloud.budgets import BudgetGuard
+
+            self._budget_guard = BudgetGuard(
+                self, refresh_interval_s=refresh_interval_s, fail_closed=fail_closed
+            )
+        return self._budget_guard
 
     # ------------------------------------------------------------------
     # Lifecycle hooks — called by AgentLoop

@@ -1,5 +1,9 @@
 """All agent-kit exceptions in one place."""
 
+from __future__ import annotations
+
+from datetime import datetime
+
 
 class AgentKitError(Exception):
     """Base exception for all agent-kit errors."""
@@ -69,3 +73,30 @@ class DAGMissingDependencyError(AgentKitError):
         super().__init__(f"Node '{node_id}' depends on '{missing_dep}' which is not in the DAG.")
         self.node_id = node_id
         self.missing_dep = missing_dep
+
+
+class BudgetExceededError(AgentKitError):
+    """A per-run cost cap or a fleet budget stopped the agent before its next model call."""
+
+    def __init__(
+        self,
+        scope: str,
+        limit_usd: float,
+        spent_usd: float,
+        budget_name: str | None = None,
+        resets_at: datetime | None = None,
+    ) -> None:
+        if scope == "run":
+            message = f"Run cost ${spent_usd:.4f} reached the per-run cap of ${limit_usd:.4f}."
+        elif budget_name is None:
+            message = "Budget status unavailable and fail_closed is set; refusing to call the model."
+        else:
+            message = f"Budget '{budget_name}' exhausted: ${spent_usd:.4f} of ${limit_usd:.4f}."
+            if resets_at is not None:
+                message += f" Resets at {resets_at.isoformat()} UTC."
+        super().__init__(message)
+        self.scope = scope
+        self.limit_usd = limit_usd
+        self.spent_usd = spent_usd
+        self.budget_name = budget_name
+        self.resets_at = resets_at

@@ -828,7 +828,6 @@ git commit -m "feat(server): budgets API, status endpoint, and evaluation after 
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import httpx

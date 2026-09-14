@@ -9,7 +9,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from agent_kit.audit.chain import AuditChain
-from agent_kit.exceptions import MaxTurnsExceededError
+from agent_kit.exceptions import BudgetExceededError, MaxTurnsExceededError
 from agent_kit.memory.in_memory import InMemoryStore
 from agent_kit.observability.tracer import AgentTracer
 from agent_kit.providers.base import BaseProvider
@@ -30,6 +30,7 @@ from agent_kit.types import (
 )
 
 if TYPE_CHECKING:
+    from agent_kit.cloud.budgets import BudgetGuard
     from agent_kit.cloud.reporter import CloudReporter
 
 
@@ -63,6 +64,8 @@ class AgentLoop:
         retry_policy: RetryPolicyConfig,
         circuit_breaker_config: CircuitBreakerConfig,
         reporter: CloudReporter | None = None,
+        max_run_cost_usd: float | None = None,
+        budget_guard: BudgetGuard | None = None,
     ) -> None:
         self._provider = provider
         self._registry = registry
@@ -79,6 +82,9 @@ class AgentLoop:
             circuit_breaker_config,
         )
         self._reporter = reporter
+        self._max_run_cost_usd = max_run_cost_usd
+        self._budget_guard = budget_guard
+        self._run_cost_usd = 0.0
         self._turns: list[Turn] = []
         self.result: AgentResult | None = None
 
@@ -125,6 +131,7 @@ class AgentLoop:
             try:
                 while turn_count < self._max_turns:
                     turn_count += 1
+                    await self._enforce_budgets()
                     messages = self._memory.history(include_system=False)
                     tool_schemas = self._registry.schemas()
 
@@ -198,6 +205,11 @@ class AgentLoop:
                         model=turn.cost.model,
                         usd=turn.cost.cost_usd,
                     )
+                    self._run_cost_usd += turn.cost.cost_usd
+                    if self._budget_guard is not None and self._reporter is not None:
+                        self._budget_guard.record_spend(
+                            self._reporter.agent_name, self._reporter.project, turn.cost.cost_usd
+                        )
 
                     # Add assistant message to memory
                     if turn.message_out:
@@ -291,6 +303,28 @@ class AgentLoop:
                 )
 
         self.result = result
+
+    async def _enforce_budgets(self) -> None:
+        """Stop before a model call when the run cap or a fleet budget is exhausted."""
+        try:
+            if self._max_run_cost_usd is not None and self._run_cost_usd >= self._max_run_cost_usd:
+                raise BudgetExceededError(
+                    scope="run", limit_usd=self._max_run_cost_usd, spent_usd=self._run_cost_usd
+                )
+            if self._budget_guard is not None and self._reporter is not None:
+                await self._budget_guard.check(self._reporter.agent_name, self._reporter.project)
+        except BudgetExceededError as exc:
+            if self._audit:
+                self._audit.append(
+                    "budget_exceeded",
+                    actor=exc.budget_name or "run",
+                    payload={
+                        "scope": exc.scope,
+                        "limit_usd": exc.limit_usd,
+                        "spent_usd": exc.spent_usd,
+                    },
+                )
+            raise
 
     async def _open_stream(
         self, messages: list[Message], tools: list[ToolSchema] | None

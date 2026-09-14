@@ -42,6 +42,8 @@ class AgentConfig:
         tracer: AgentTracer | None = None,
         memory_window: int = 50,
         cloud: CloudReporter | None = None,
+        max_run_cost_usd: float | None = None,
+        enforce_budgets: bool = False,
     ) -> None:
         self.model = model
         self.system_prompt = system_prompt
@@ -54,6 +56,8 @@ class AgentConfig:
         self.tracer = tracer
         self.memory_window = memory_window
         self.cloud = cloud
+        self.max_run_cost_usd = max_run_cost_usd  # per-run hard cap, enforced before each model call
+        self.enforce_budgets = enforce_budgets  # fleet budgets from agent-kit Cloud (requires cloud)
 
 
 class Agent:
@@ -101,6 +105,8 @@ class Agent:
     ) -> None:
         self._provider = provider
         self._config = config or AgentConfig()
+        if self._config.enforce_budgets and self._config.cloud is None:
+            raise ValueError("enforce_budgets=True requires AgentConfig(cloud=CloudReporter(...))")
         self._memory = memory or InMemoryStore(window=self._config.memory_window)
         self._registry = ToolRegistry(
             tools=tools or [],
@@ -159,6 +165,12 @@ class Agent:
             retry_policy=self._config.retry_policy,
             circuit_breaker_config=self._config.circuit_breaker,
             reporter=self._config.cloud,
+            max_run_cost_usd=self._config.max_run_cost_usd,
+            budget_guard=(
+                self._config.cloud.budget_guard()
+                if self._config.enforce_budgets and self._config.cloud is not None
+                else None
+            ),
         )
 
     @property
