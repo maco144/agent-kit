@@ -35,7 +35,7 @@ class _Run:
     priced_cost_usd: float = 0.0
 
 
-def _price(
+def price_call(
     model: str | None, input_tokens: int, output_tokens: int, cache_read: int, cache_write: int
 ) -> float:
     """USD for one model call from agent-kit's pricing tables; 0.0 when unpriced."""
@@ -113,17 +113,19 @@ class RunRecorder:
         cache_write_tokens: int = 0,
         tool_names: list[str] | None = None,
         duration_ms: int = 0,
-    ) -> None:
+    ) -> float:
+        """Record one model call; returns its priced cost (0.0 if the run is unknown)."""
+        cost = 0.0
         with self._guard("llm_turn"):
             run = self._runs.get(run_id)
             if run is None:
                 logger.debug("RunRecorder.llm_turn for unknown run %s dropped", run_id)
-                return
+                return 0.0
             if not run.run_start_sent:
                 run.model = run.model or model
                 self._send_run_start(run_id, run)
             resolved_model = model or run.model
-            cost = _price(
+            cost = price_call(
                 resolved_model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
             )
             names = list(tool_names or [])
@@ -155,6 +157,7 @@ class RunRecorder:
             run.turns += 1
             run.total_tokens += input_tokens + output_tokens + cache_read_tokens + cache_write_tokens
             run.priced_cost_usd += cost
+        return cost
 
     def tool_call(
         self,

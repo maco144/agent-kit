@@ -25,8 +25,9 @@ import threading
 import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
+from agent_kit.exceptions import BudgetExceededError
 from agent_kit.integrations.recorder import RunRecorder
 
 if TYPE_CHECKING:
@@ -50,8 +51,18 @@ _HOOK_EVENTS = (
 class ClaudeAgentObserver:
     """Observes Claude Agent SDK runs through hooks and the message stream."""
 
-    def __init__(self, reporter: CloudReporter, agent_name: str | None = None) -> None:
+    def __init__(
+        self,
+        reporter: CloudReporter,
+        agent_name: str | None = None,
+        max_run_cost_usd: float | None = None,
+        enforce_budgets: bool = False,
+    ) -> None:
+        self._reporter = reporter
+        self._agent_name = reporter.agent_name or agent_name or "claude-agent"
         self._recorder = RunRecorder(reporter, harness=HARNESS, agent_name=agent_name or "claude-agent")
+        self._max_run_cost_usd = max_run_cost_usd
+        self._guard = reporter.budget_guard() if enforce_budgets else None
         self._sessions: dict[str, _Observation] = {}  # session_id -> active observe() call
         self._tool_started: dict[str, float] = {}  # tool_use_id -> monotonic start
         self._lock = threading.Lock()
@@ -70,6 +81,8 @@ class ClaudeAgentObserver:
         for event, matchers in self.hooks().items():
             merged.setdefault(event, []).extend(matchers)
         options.hooks = merged
+        if self._max_run_cost_usd is not None and getattr(options, "max_budget_usd", None) is None:
+            options.max_budget_usd = self._max_run_cost_usd  # the SDK enforces per-run caps natively
         return options
 
     async def observe(
@@ -98,7 +111,41 @@ class ClaudeAgentObserver:
             self._record_hook(input_data, tool_use_id)
         except Exception:
             logger.debug("ClaudeAgentObserver hook failed", exc_info=True)
+        event = input_data.get("hook_event_name") if isinstance(input_data, dict) else None
+        if self._guard is None or event not in ("PreToolUse", "SubagentStart"):
+            return {}
+        try:
+            await self._guard.check(self._agent_name, self._reporter.project)
+        except BudgetExceededError as exc:
+            return self._stop(input_data, str(event), exc)
+        except Exception:
+            logger.debug("ClaudeAgentObserver budget check failed", exc_info=True)
         return {}
+
+    def _stop(self, data: dict[str, Any], event: str, exc: BudgetExceededError) -> HookJSONOutput:
+        """Hook output that halts the agent at this boundary."""
+        reason = f"agent-kit: {exc}"
+        with self._lock:
+            observation = self._sessions.get(data.get("session_id") or "")
+        if observation is not None:
+            self._recorder.audit(
+                observation.run_id,
+                "budget_exceeded",
+                actor=exc.budget_name or "run",
+                payload={"scope": exc.scope, "limit_usd": exc.limit_usd, "spent_usd": exc.spent_usd},
+            )
+        output: dict[str, Any] = {"continue_": False, "stopReason": reason}
+        if event == "PreToolUse":
+            output["hookSpecificOutput"] = {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        return cast("HookJSONOutput", output)
+
+    def _record_spend(self, usd: float) -> None:
+        if self._guard is not None:
+            self._guard.record_spend(self._agent_name, self._reporter.project, usd)
 
     def _record_hook(self, data: dict[str, Any], tool_use_id: str | None) -> None:
         event = data.get("hook_event_name")
@@ -221,7 +268,7 @@ class _Observation:
         if not self._turn_open:
             return
         usage = self._turn_usage or {}
-        self._recorder.llm_turn(
+        cost = self._recorder.llm_turn(
             self.run_id,
             self._turn_model,
             input_tokens=int(usage.get("input_tokens") or 0),
@@ -230,6 +277,7 @@ class _Observation:
             cache_write_tokens=int(usage.get("cache_creation_input_tokens") or 0),
             tool_names=self._turn_tools,
         )
+        self._observer._record_spend(cost)
         self._turn_id = None
         self._turn_model = None
         self._turn_usage = None

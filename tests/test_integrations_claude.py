@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from agent_kit.exceptions import BudgetExceededError
 from agent_kit.integrations.claude_agent_sdk import ClaudeAgentObserver
 
 
@@ -301,3 +302,84 @@ async def test_observe_with_real_sdk_message_types(cloud_capture):
     assert cloud_capture.types()[-2:] == ["run_complete", "audit_flush"]
     assert "tool_call" in cloud_capture.audit_types(run_id)
     cloud_capture.assert_chain_intact(run_id)
+
+
+class TrippedGuard:
+    def __init__(self, tripped: bool = True) -> None:
+        self.tripped = tripped
+        self.checks: list[tuple[str, str]] = []
+        self.spend: list[float] = []
+
+    async def check(self, agent_name: str, project: str) -> None:
+        self.checks.append((agent_name, project))
+        if self.tripped:
+            raise BudgetExceededError(scope="budget", limit_usd=5.0, spent_usd=5.5, budget_name="claude daily")
+
+    def record_spend(self, agent_name: str, project: str, usd: float) -> None:
+        self.spend.append(usd)
+
+
+async def test_tripped_budget_stops_claude_at_tool_boundary(cloud_capture):
+    guard = TrippedGuard()
+    cloud_capture.reporter._budget_guard = guard
+    observer = ClaudeAgentObserver(cloud_capture.reporter, enforce_budgets=True)
+    outputs: list[Any] = []
+
+    async def source():
+        yield INIT
+        outputs.append(await observer._on_hook(hook("PreToolUse", tool_name="Bash", tool_use_id="t1", tool_input={}), "t1", None))
+        outputs.append(await observer._on_hook(hook("SubagentStart", agent_id="a", agent_type="x"), None, None))
+        yield ResultMessage()
+
+    await collect(observer, source())
+
+    pre, sub = outputs
+    assert pre["continue_"] is False and "claude daily" in pre["stopReason"]
+    assert pre["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert sub["continue_"] is False
+    assert guard.checks == [("claude-agent", "proj"), ("claude-agent", "proj")]
+    (run_id,) = {e.run_id for e in cloud_capture.events}
+    assert cloud_capture.audit_types(run_id).count("budget_exceeded") == 2
+
+
+async def test_budget_not_tripped_lets_hooks_pass_and_records_spend(cloud_capture):
+    guard = TrippedGuard(tripped=False)
+    cloud_capture.reporter._budget_guard = guard
+    observer = ClaudeAgentObserver(cloud_capture.reporter, enforce_budgets=True)
+    outputs: list[Any] = []
+
+    async def source():
+        yield INIT
+        yield AssistantMessage([ToolUseBlock("t1", "Read", {})], "claude-opus-5", usage(1000, 100), "m1", "s1")
+        outputs.append(await observer._on_hook(hook("PreToolUse", tool_name="Read", tool_use_id="t1", tool_input={}), "t1", None))
+        yield ResultMessage()
+
+    await collect(observer, source())
+
+    assert outputs == [{}]
+    assert guard.spend == [pytest.approx((1000 * 5 + 100 * 25) / 1_000_000)]
+
+
+async def test_observer_without_enforcement_never_checks(cloud_capture):
+    guard = TrippedGuard()
+    cloud_capture.reporter._budget_guard = guard
+    observer = ClaudeAgentObserver(cloud_capture.reporter)
+
+    async def source():
+        yield INIT
+        assert await observer._on_hook(hook("PreToolUse", tool_name="Bash", tool_use_id="t", tool_input={}), "t", None) == {}
+        yield ResultMessage()
+
+    await collect(observer, source())
+    assert guard.checks == []
+
+
+@requires_claude_sdk
+def test_with_hooks_sets_native_per_run_cap():
+    from claude_agent_sdk import ClaudeAgentOptions
+
+    from agent_kit.cloud.reporter import CloudReporter
+
+    observer = ClaudeAgentObserver(CloudReporter(api_key="akt_test"), max_run_cost_usd=1.5)
+    assert observer.with_hooks(ClaudeAgentOptions()).max_budget_usd == 1.5
+    assert observer.with_hooks(ClaudeAgentOptions(max_budget_usd=0.25)).max_budget_usd == 0.25
