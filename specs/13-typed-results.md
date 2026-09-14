@@ -101,7 +101,15 @@ third-party providers without the attribute keep working through the prompt fall
 |---|---|---|
 | Anthropic | `True` | `output_config={"format": {"type": "json_schema", "schema": spec.json_schema}}` |
 | OpenAI | `True` | `response_format={"type": "json_schema", "json_schema": {"name": spec.name, "schema": spec.json_schema, "strict": True}}` |
-| Ollama | `True` (inherits OpenAI) | same as OpenAI (Ollama's OpenAI-compatible endpoint honours `response_format`) |
+| Ollama | `True` (inherits OpenAI); `structured_output_with_tools = False` | same as OpenAI (Ollama's OpenAI-compatible endpoint honours `response_format`) |
+
+**Amended during implementation (live Ollama runs):** Ollama applies `response_format` as a grammar over
+the whole reply, so with tools in the request the model can never call them — 4/4 live runs skipped the
+tool and invented the data. Providers with that limitation declare `structured_output_with_tools = False`
+(read with `getattr(..., True)`). For such a provider, a typed run with tools starts in prompt mode; once
+the model gives a tool-free answer that fails validation, it has stopped calling tools, so the repair
+turns switch to native mode. Live: llama3.2 calls the tool, answers in prose, and the natively constrained
+repair returns valid JSON — 3 turns.
 
 OpenAI: when the message has `refusal` and no `content`, the assistant text is the refusal text, so it
 reaches validation (and the repair message) instead of an empty string.
@@ -166,7 +174,8 @@ Prompt mode does not pass `output_schema` to the provider.
 
 - `output_type` given → `spec = OutputSpec.from_type(output_type)` at run start (a type Pydantic cannot
   build a schema for raises `pydantic` errors before any provider call); `native = spec.native_compatible
-  and getattr(provider, "supports_structured_output", False)`.
+  and getattr(provider, "supports_structured_output", False) and (getattr(provider,
+  "structured_output_with_tools", True) or the run has no tools)`.
 - Each provider call (complete and stream) passes `output_schema=spec` when native; in prompt mode the
   system prompt carries `spec.instructions()`.
 - A turn with tool calls proceeds as today.
@@ -181,6 +190,7 @@ Prompt mode does not pass `output_schema` to the provider.
     <errors>
     Respond again with only the corrected JSON.
     ```
+    If native mode was held back only because of tools, the repair turns use native mode.
   - **invalid**, retries exhausted → audit `output_validation_failed`, then raise
     `OutputValidationError(errors, raw_output, attempts)` through the normal error path (`run_error` to
     Cloud).
@@ -221,7 +231,7 @@ The raw output is not placed in audit payloads.
   the schema, no `output_schema` kwarg); `native_compatible=False` forces prompt mode on a native
   provider; `stream()` parity with `last_result.parsed`; `output_type` absent from hook context; untyped
   runs pass no `output_schema`; `agent_complete.output_type`.
-- **Live** (outside CI): a typed run with a tool against local Ollama (`llama3.2`, native
+- **Live** (outside CI, done): a typed run with a tool against local Ollama (`llama3.2`, native
   `response_format`), plus prompt mode on the same model; against the Anthropic and OpenAI APIs when
   `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` are set.
 

@@ -34,6 +34,10 @@ class OllamaProvider(OpenAIProvider):
         provider = OllamaProvider(base_url="http://gpu-box:11434/v1")
     """
 
+    # Ollama applies response_format as a grammar over the whole reply, which rules out tool calls;
+    # AgentLoop uses prompt-mode output instructions for typed runs that have tools.
+    structured_output_with_tools = False
+
     def __init__(
         self,
         default_model: str = _DEFAULT_MODEL,

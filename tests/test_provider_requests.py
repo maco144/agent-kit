@@ -500,3 +500,5 @@ def test_ollama_inherits_structured_output_support():
     from agent_kit.providers.ollama import OllamaProvider
 
     assert OllamaProvider().supports_structured_output is True
+    # Ollama's format grammar covers the whole reply, so the model can't also call tools
+    assert OllamaProvider().structured_output_with_tools is False

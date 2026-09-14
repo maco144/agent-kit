@@ -180,6 +180,29 @@ async def test_provider_without_native_support_gets_prompt_mode():
     assert result.parsed == Weather(city="Paris", temp_c=21)
 
 
+async def test_provider_that_cannot_mix_tools_uses_prompt_mode_only_when_tools_exist():
+    with_tools = Scripted(call("get_weather", city="Paris"), final(GOOD))
+    with_tools.structured_output_with_tools = False  # type: ignore[attr-defined]
+    await Agent(with_tools, tools=[get_weather]).run("weather?", output_type=Weather)
+    assert all("output_schema" not in kw for _, kw in with_tools.requests)
+    assert with_tools.requests[0][1]["system"].startswith("Respond with only a JSON value")
+
+    # the model answered instead of calling tools, so the repair turn can use the native constraint
+    repaired = Scripted(call("get_weather", city="Paris"), final("It is sunny."), final(GOOD))
+    repaired.structured_output_with_tools = False  # type: ignore[attr-defined]
+    recorded_agent = Agent(repaired, tools=[get_weather])
+    recorded = audited(recorded_agent)
+    result = await recorded_agent.run("weather?", output_type=Weather)
+    assert result.parsed == Weather(city="Paris", temp_c=21)
+    assert ["output_schema" in kw for _, kw in repaired.requests] == [False, False, True]
+    assert payloads(recorded, "output_validation_failed")[0]["native"] is False
+
+    no_tools = Scripted(final(GOOD))
+    no_tools.structured_output_with_tools = False  # type: ignore[attr-defined]
+    await Agent(no_tools).run("weather?", output_type=Weather)
+    assert no_tools.requests[0][1]["output_schema"].name == "Weather"
+
+
 async def test_non_native_schema_forces_prompt_mode():
     provider = Scripted(final('{"tags": {"a": 1}}'))
     agent = Agent(provider)

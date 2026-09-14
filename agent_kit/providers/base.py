@@ -32,7 +32,8 @@ class BaseProvider(Protocol):
 
     Providers that constrain answers natively set ``supports_structured_output = True`` and honour
     ``output_schema``. AgentLoop only passes ``output_schema`` to such providers; others receive the
-    schema as system prompt instructions instead.
+    schema as system prompt instructions instead. Providers whose native constraint prevents tool calls
+    also set ``structured_output_with_tools = False``; runs with tools then use the prompt instead.
     """
 
     config: ProviderConfig

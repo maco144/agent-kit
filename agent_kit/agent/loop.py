@@ -134,10 +134,15 @@ class AgentLoop:
 
         # Typed runs: constrain natively when the provider can, else describe the schema in the prompt
         spec = OutputSpec.from_type(output_type) if output_type is not None else None
-        native = (
+        native_capable = (
             spec is not None
             and spec.native_compatible
             and bool(getattr(self._provider, "supports_structured_output", False))
+        )
+        # Some providers' native constraint rules out tool calls: prompt mode until the model answers
+        native = native_capable and (
+            bool(getattr(self._provider, "structured_output_with_tools", True))
+            or not self._registry.schemas()
         )
         system = self._system_prompt
         if spec is not None and not native:
@@ -289,6 +294,10 @@ class AgentLoop:
                             self._memory.add(
                                 Message(role="user", content=_REPAIR_PROMPT.format(errors=exc.errors))
                             )
+                            if native_capable and not native:
+                                # The model has stopped calling tools; constrain the repair natively
+                                native = True
+                                output_kwargs = {"output_schema": spec}
                             continue
 
                     # --- Execute tool calls concurrently; record results in call order ---
