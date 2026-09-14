@@ -19,6 +19,7 @@ demo — running agents you can trust, afford, and prove things about:
 | Retry with backoff | Transient provider failures retried under a configurable policy |
 | Tamper-evident audit chain | Hash-linked record of every LLM call and tool call; verify locally, re-verified server-side, JSONL/CSV export |
 | Cost per turn | Token- and cache-aware USD for current Claude and OpenAI models; unpriced models are logged, not silently $0 |
+| Cost circuit breaker | Per-run caps and daily / weekly / monthly fleet budgets stop agents before the next model call, and alert when tripped |
 | Self-hostable ops backend | Fleet metrics, alerting (Slack, PagerDuty, webhook, SMTP), and SLA context — see [agent-kit Cloud](#agent-kit-cloud) |
 | Provider-neutral | Anthropic, OpenAI, Ollama, and any OpenAI-compatible endpoint behind one interface |
 | OpenTelemetry | No-op by default; console JSON or OTLP export when you want it |
@@ -448,6 +449,25 @@ CloudReporter(
 ```
 
 See [`docs/cloud-quickstart.md`](docs/cloud-quickstart.md) to get started, or [`docs/self-hosting.md`](docs/self-hosting.md) to run the backend yourself.
+
+### Stop runaway spend
+
+```python
+reporter = CloudReporter(project="support", agent_name="support-bot")
+
+agent = Agent(
+    AnthropicProvider(),
+    config=AgentConfig(
+        cloud=reporter,
+        max_run_cost_usd=2.00,   # per run, enforced locally
+        enforce_budgets=True,    # fleet budgets defined in agent-kit Cloud
+    ),
+)
+```
+
+Budgets (`$200/day for support-bot`) live in agent-kit Cloud at `/v1/budgets`; when one trips, the next
+model call raises `BudgetExceededError` and a `budget_exceeded` alert fires. See
+[`docs/cloud-quickstart.md`](docs/cloud-quickstart.md#stop-runaway-spend).
 
 ### Already on another harness?
 

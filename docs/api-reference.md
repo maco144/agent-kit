@@ -529,6 +529,7 @@ Rule types and their `config` fields:
 | `audit_integrity_failure` | `agent_name` (optional) | Event-driven, immediate |
 | `cost_anomaly` | `threshold_usd` (float), `window_hours` (int) | Polled every 60s |
 | `error_rate` | `threshold_pct` (float), `window_hours` (int), `min_runs` (int) | Polled every 60s |
+| `budget_exceeded` | `budget_id` (a budget ID, or `*` for any budget) | Event-driven: fires when a budget trips, resolves when it closes |
 
 **Response** `201 Created` — returns the created `AlertRuleSchema`.
 
@@ -592,6 +593,69 @@ Acknowledge a firing alert.
 ```
 
 Sets `state = "acked"`. The alert remains visible until resolved.
+
+---
+
+## Budgets
+
+Spend ceilings that stop agents. A budget covers matching agents (`project` and `agent_name`, `*` = any) over a UTC calendar period — `daily` (resets 00:00), `weekly` (Monday 00:00), or `monthly` (the 1st). Spend is the period's completed-run cost plus the cost so far of runs still in flight, so a runaway run counts before it finishes.
+
+A budget **trips** when spend reaches `limit_usd` and stays tripped until the period resets or the limit is raised above current spend. SDKs with `AgentConfig(enforce_budgets=True)` (and the Claude / OpenAI adapters with enforcement enabled) refuse the next model call while a budget covering them is tripped. Budgets are re-evaluated after every ingest batch, on reads and edits, and every 60 seconds by the alert worker.
+
+### Budget object
+
+```json
+{
+  "id": "uuid",
+  "name": "support daily",
+  "project": "*",
+  "agent_name": "support-bot",
+  "period": "daily",
+  "limit_usd": 200.0,
+  "enabled": true,
+  "spent_usd": 212.41,
+  "remaining_usd": 0.0,
+  "tripped": true,
+  "tripped_at": "2026-09-14T14:20:11",
+  "period_start": "2026-09-14T00:00:00",
+  "resets_at": "2026-09-15T00:00:00"
+}
+```
+
+### GET /v1/budgets
+
+All budgets for the org with live status. **Response** `200 OK` — `{"budgets": [Budget]}`.
+
+### POST /v1/budgets
+
+```json
+{"name": "support daily", "period": "daily", "limit_usd": 200, "agent_name": "support-bot", "project": "*", "enabled": true}
+```
+
+`name`, `period`, `limit_usd` required. **Response** `201 Created` — the budget. `400` if `period` isn't `daily`/`weekly`/`monthly` or `limit_usd` ≤ 0.
+
+### PATCH /v1/budgets/{id}
+
+Update any of `name`, `period`, `limit_usd`, `project`, `agent_name`, `enabled`. Re-evaluates immediately — raising the limit above current spend closes a tripped budget and resolves its alerts. **Response** `200 OK` — the budget.
+
+### DELETE /v1/budgets/{id}
+
+**Response** `204 No Content`. Resolves the budget's active `budget_exceeded` alerts.
+
+### GET /v1/budgets/status
+
+The enabled budgets covering one agent, with live status — what SDKs poll to enforce budgets.
+
+| Param | Description |
+|---|---|
+| `project` | The agent's project |
+| `agent_name` | The agent's name |
+
+**Response** `200 OK` — `{"budgets": [Budget]}`.
+
+### `budget_exceeded` alerts
+
+Create an alert rule with `"type": "budget_exceeded"` and `"config": {"budget_id": "<id>"}` (or `"*"` for every budget). It fires once when the budget trips, with context `budget_id`, `budget_name`, `project`, `agent_name`, `period`, `limit_usd`, `spent_usd`, `resets_at`, and resolves when the budget closes. A `*` rule resolves once no budget is tripped.
 
 ---
 

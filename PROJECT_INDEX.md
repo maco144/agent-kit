@@ -15,6 +15,7 @@ agent-kit/
 │   │   ├── claude_agent_sdk.py  # ClaudeAgentObserver (hooks + message stream)
 │   │   └── openai_agents.py     # AgentKitTraceProcessor (tracing spans)
 │   ├── cloud/              # Cloud reporting SDK module
+│   │   ├── budgets.py      # BudgetGuard (fleet budget enforcement)
 │   │   ├── models.py       # CloudEvent, EventType
 │   │   └── reporter.py     # CloudReporter (batched, fire-and-forget)
 │   ├── providers/          # LLM provider adapters
@@ -51,6 +52,7 @@ agent-kit/
 │   │   ├── models.py       # ORM models (all tables)
 │   │   ├── schemas.py      # Pydantic request/response schemas
 │   │   ├── audit_chain.py  # Server-side Merkle chain verify + append_event
+│   │   ├── budgets.py      # Budget periods, spend, trip/close + alerts
 │   │   ├── otlp/           # OTLP trace ingest
 │   │   │   ├── decode.py     # protobuf / OTLP-JSON → RawSpan
 │   │   │   ├── normalize.py  # GenAI semconv + OpenInference → GenAISpan
@@ -62,17 +64,18 @@ agent-kit/
 │   │   └── routers/
 │   │       ├── ingest.py   # POST /v1/events
 │   │       ├── otlp.py     # POST /v1/traces (OTLP/HTTP)
+│   │       ├── budgets.py  # /v1/budgets CRUD + status
 │   │       ├── metrics.py  # GET /v1/metrics/*
 │   │       ├── alerts.py   # CRUD /v1/alerts/*
 │   │       ├── audit.py    # GET /v1/audit/*
 │   │       └── support.py  # GET /v1/support/*
-│   ├── migrations/         # Alembic versions 001–005
-│   ├── tests/              # 8 server test files + OTLP helpers
+│   ├── migrations/         # Alembic versions 001–006
+│   ├── tests/              # 9 server test files + OTLP helpers
 │   └── pyproject.toml      # agentkit-cloud-server v0.1.0
-├── tests/                  # SDK tests (14 test files + conftest)
+├── tests/                  # SDK tests (15 test files + conftest)
 ├── examples/               # 8 example scripts + README
 ├── docs/                   # 4 cloud documentation files
-├── specs/                  # 9 spec files (00–08)
+├── specs/                  # 10 spec files (00–09)
 └── pyproject.toml          # SDK build config + deps
 ```
 
@@ -140,6 +143,11 @@ agent-kit/
 - Processes all 6 event types; populates `AuditRun`, `AuditEvent`, `ActiveRunCache`, `AgentMetricSnapshot`, `CircuitBreakerEvent`
 - Triggers background Merkle chain verification after each `audit_flush`
 - Triggers alert evaluation on `circuit_state_change` events
+
+### `server/app/routers/budgets.py` — Cost Circuit Breaker
+- `GET|POST /v1/budgets`, `PATCH|DELETE /v1/budgets/{id}` — daily/weekly/monthly UTC spend ceilings with live spend and trip state
+- `GET /v1/budgets/status?project=&agent_name=` — budgets covering one agent; polled by SDK `BudgetGuard`
+- `budget_exceeded` alert rules fire on trip, resolve on reset / raised limit
 
 ### `server/app/routers/otlp.py` — OTLP Trace Ingest
 - `POST /v1/traces` — OTLP/HTTP (protobuf or JSON, gzip); GenAI semconv + OpenInference spans become runs with server-built audit chains (`chain_origin: "ingest"`); content never stored
@@ -223,6 +231,7 @@ Managed by Alembic (`server/migrations/versions/`):
 | `specs/03-alerting.md` | Alerting rules, channels, evaluator (spec implemented) |
 | `specs/04-sla-support.md` | SLA-backed support context API (spec implemented) |
 | `specs/05-dashboard-ui.md` | Dashboard UI design spec |
+| `specs/09-cost-circuit-breaker.md` | Per-run caps + fleet budgets with enforcement and alerts (implemented) |
 | `specs/08-otlp-ingest.md` | OTLP trace ingest for GenAI semconv + OpenInference (implemented) |
 | `specs/07-harness-adapters.md` | Claude Agent SDK + OpenAI Agents SDK adapters (implemented) |
 | `specs/06-harness-roadmap.md` | Harness roadmap: Tier 1 fundamentals (done), Tier 2 parity, Tier 3 differentiators |
@@ -244,6 +253,7 @@ Managed by Alembic (`server/migrations/versions/`):
 | `test_cloud_reporter.py` | CloudReporter batching + HTTP shipping |
 | `test_provider_requests.py` | Exact Anthropic/OpenAI request payloads via fake clients; pricing; streaming |
 | `test_memory_window.py` | Tool-safe memory trimming, SQLite tool_calls persistence + migration |
+| `test_budgets.py` | Per-run caps, BudgetGuard caching / local spend / fail-open, fleet enforcement |
 | `test_integrations_recorder.py` | RunRecorder lifecycle, deferred run_start, cost reconciliation, chain integrity |
 | `test_integrations_claude.py` | Claude Agent SDK adapter (fakes + real SDK types) |
 | `test_integrations_openai_agents.py` | OpenAI Agents SDK adapter via real `agents.tracing` |
@@ -260,6 +270,7 @@ Managed by Alembic (`server/migrations/versions/`):
 | `test_audit_chain_append.py` | Server-built chains, `chain_origin` in the runs API |
 | `test_otlp_decode.py` | OTLP protobuf / JSON decoding, gzip, partial success |
 | `test_otlp_normalize.py` | GenAI semconv + OpenInference mapping, no content retained, pricing |
+| `test_budgets.py` | Budget periods, spend (snapshots + in-flight), trip/close, alerts, API |
 | `test_otlp_ingest.py` | `POST /v1/traces` end to end: lifecycle, idle/late spans, retries, real SDK bytes |
 
 ## 🔗 Key Dependencies

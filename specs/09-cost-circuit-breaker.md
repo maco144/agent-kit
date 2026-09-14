@@ -1,6 +1,6 @@
 # Spec 09 — Cost Circuit Breaker
 
-Status: **approved design** · Written 2026-09-14 · Roadmap item: 3.2 (`specs/06-harness-roadmap.md`)
+Status: **implemented** · Written 2026-09-14 · Roadmap item: 3.2 (`specs/06-harness-roadmap.md`)
 
 ## Goal
 

@@ -96,6 +96,40 @@ You'll receive a Slack message the next time any agent's circuit breaker opens.
 
 ---
 
+## Stop runaway spend
+
+Cap each run locally and enforce fleet budgets from agent-kit Cloud:
+
+```python
+reporter = CloudReporter(project="support", agent_name="support-bot")
+
+agent = Agent(
+    AnthropicProvider(),
+    config=AgentConfig(
+        cloud=reporter,
+        max_run_cost_usd=2.00,   # per run, enforced locally
+        enforce_budgets=True,    # fleet budgets defined in agent-kit Cloud
+    ),
+)
+```
+
+Create the budget once:
+
+```bash
+curl -X POST https://ingest.agentkit.io/v1/budgets \
+  -H "Authorization: Bearer $AGENTKIT_API_KEY" -H "Content-Type: application/json" \
+  -d '{"name": "support daily", "period": "daily", "limit_usd": 200, "agent_name": "support-bot"}'
+```
+
+Before every model call the agent checks both. When a ceiling is reached it raises `BudgetExceededError` (`scope` is `"run"` or `"budget"`, with `limit_usd`, `spent_usd`, `budget_name`, `resets_at`) instead of calling the model, and records a `budget_exceeded` audit event. Add a `budget_exceeded` alert rule to hear about it.
+
+- **Overshoot is bounded, not zero.** A per-run cap can be passed by the one call that crosses it. A fleet budget can be passed by one call per process, plus other processes' spend within the 30-second status refresh (`reporter.budget_guard(refresh_interval_s=...)`).
+- **Fails open.** If budget status can't be fetched, agents keep running. Use `reporter.budget_guard(fail_closed=True)` to refuse instead.
+- **Claude Agent SDK:** `ClaudeAgentObserver(reporter, max_run_cost_usd=2.0, enforce_budgets=True)` — the per-run cap becomes the SDK's own `max_budget_usd`; a tripped budget stops the agent at its next tool or subagent call.
+- **OpenAI Agents SDK:** `Runner.run(agent, input, hooks=AgentKitRunHooks(reporter, max_run_cost_usd=2.0))` — stops before the next model call. Give the reporter an `agent_name` so budgets match the runs it reports.
+
+---
+
 ## Common patterns
 
 ### Multiple agents, one reporter per agent
