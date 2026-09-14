@@ -5,6 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-13
+
+Tool-using agents work end to end. In 0.2.0 every agent that called a tool failed on the following
+turn with a provider 400 — upgrade if you use tools.
+
 ### Added
 - `Agent.stream()` now runs the full agent loop — tools execute between turns, and retry, circuit breaking, audit, and cloud reporting apply. The finished `AgentResult` is available as `agent.last_result` (also set by `run()`). Provider `stream()` accepts `tools` and may yield a final `Turn` after its text chunks; text-only providers keep working.
 - Tool calls within one turn run concurrently; synchronous tools run in a worker thread instead of blocking the event loop.
@@ -17,6 +22,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 - `docs/api-reference.md` now documents `GET /v1/audit/runs/{run_id}/export` and `GET /v1/audit/events`.
 
 ### Changed
+- The source distribution is limited to the SDK (`agent_kit/`, `tests/`, `examples/`, README, LICENSE, CHANGELOG); it previously swept in `server/` and untracked local files.
 - Relicensed from FSL-1.1-Apache-2.0 to the **Rising Sun License v1.0** — free for personal, educational, and research use; commercial deployments connect to the Nous network.
 - `PROJECT_INDEX.json` now covers the cloud server (13 modules, server tests, server dependencies) alongside the SDK.
 

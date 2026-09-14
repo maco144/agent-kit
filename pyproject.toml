@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-kit"
-version = "0.2.0"
+version = "0.3.0"
 description = "Production-ready framework for building AI agents — type-safe, observable, circuit-broken."
 readme = "README.md"
 license = { text = "Rising Sun License v1.0" }
@@ -46,6 +46,11 @@ Issues     = "https://github.com/maco144/agent-kit/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["agent_kit"]
 artifacts = ["agent_kit/py.typed"]
+
+[tool.hatch.build.targets.sdist]
+# Explicit allowlist: hatch honours only the repo .gitignore, so local files
+# (editor/agent settings, scratch notes) and server/ would otherwise ship.
+include = ["/agent_kit", "/tests", "/examples", "/README.md", "/LICENSE", "/CHANGELOG.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
