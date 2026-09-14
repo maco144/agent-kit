@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, AsyncIterator, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
 from agent_kit.types import Message, ToolSchema, Turn
+
+if TYPE_CHECKING:
+    from agent_kit.output import OutputSpec
 
 
 class ProviderConfig(BaseModel):
@@ -26,6 +29,10 @@ class BaseProvider(Protocol):
 
     Implementing classes do NOT need to inherit from BaseProvider —
     duck typing via @runtime_checkable is enough.
+
+    Providers that constrain answers natively set ``supports_structured_output = True`` and honour
+    ``output_schema``. AgentLoop only passes ``output_schema`` to such providers; others receive the
+    schema as system prompt instructions instead.
     """
 
     config: ProviderConfig
@@ -37,6 +44,7 @@ class BaseProvider(Protocol):
         tools: list[ToolSchema] | None = None,
         system: str | None = None,
         max_tokens: int = 4096,
+        output_schema: OutputSpec[Any] | None = None,
         **kwargs: Any,
     ) -> Turn:
         """
@@ -54,6 +62,7 @@ class BaseProvider(Protocol):
         tools: list[ToolSchema] | None = None,
         system: str | None = None,
         max_tokens: int = 4096,
+        output_schema: OutputSpec[Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[str | Turn]:
         """

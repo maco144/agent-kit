@@ -13,10 +13,13 @@ from types import SimpleNamespace as NS
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
 from agent_kit import Agent, tool
+from agent_kit.output import OutputSpec
 from agent_kit.providers import anthropic as anthropic_provider
 from agent_kit.providers.anthropic import AnthropicProvider
+from agent_kit.types import Message
 
 
 def text_block(text: str) -> NS:
@@ -399,3 +402,101 @@ async def test_openai_stream_assembles_tool_call_deltas():
     assert fake.calls[1]["messages"][1]["tool_calls"][0]["function"]["arguments"] == '{"city": "Paris"}'
     assert agent.last_result is not None
     assert agent.last_result.total_tokens == 39
+
+
+# ---------------------------------------------------------------------------
+# Structured outputs
+# ---------------------------------------------------------------------------
+
+
+class Weather(BaseModel):
+    city: str
+    temp_c: int
+
+
+WEATHER = OutputSpec.from_type(Weather)
+ASK = [Message(role="user", content="weather?")]
+
+
+async def test_anthropic_complete_sends_output_config():
+    provider = AnthropicProvider(api_key="test")
+    fake = FakeAnthropic([anthropic_response([text_block("{}")]), anthropic_response([text_block("{}")])])
+    provider._client = fake  # type: ignore[assignment]
+
+    await provider.complete(ASK, output_schema=WEATHER, output_config={"effort": "low"})
+    await provider.complete(ASK)
+
+    assert provider.supports_structured_output is True
+    assert fake.calls[0]["output_config"] == {
+        "effort": "low",
+        "format": {"type": "json_schema", "schema": WEATHER.json_schema},
+    }
+    assert "output_config" not in fake.calls[1]
+
+
+async def test_anthropic_stream_sends_output_config():
+    provider = AnthropicProvider(api_key="test")
+    calls: list[dict[str, Any]] = []
+
+    def fake_stream(**kwargs: Any) -> FakeAnthropicStream:
+        calls.append(kwargs)
+        return FakeAnthropicStream(["{}"], anthropic_response([text_block("{}")]))
+
+    provider._client = NS(messages=NS(stream=fake_stream))  # type: ignore[assignment]
+    [c async for c in provider.stream(ASK, output_schema=WEATHER)]
+
+    assert calls[0]["output_config"] == {"format": {"type": "json_schema", "schema": WEATHER.json_schema}}
+
+
+@requires_openai
+async def test_openai_complete_sends_response_format():
+    from agent_kit.providers.openai import OpenAIProvider
+
+    provider = OpenAIProvider(api_key="test")
+    fake = FakeOpenAI([openai_response("{}"), openai_response("{}")])
+    provider._client = fake  # type: ignore[assignment]
+
+    await provider.complete(ASK, output_schema=WEATHER)
+    await provider.complete(ASK)
+
+    assert provider.supports_structured_output is True
+    assert fake.calls[0]["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "Weather", "schema": WEATHER.json_schema, "strict": True},
+    }
+    assert "response_format" not in fake.calls[1]
+
+
+@requires_openai
+async def test_openai_stream_sends_response_format():
+    from agent_kit.providers.openai import OpenAIProvider
+
+    provider = OpenAIProvider(api_key="test")
+    fake = FakeOpenAI([FakeOpenAIStream([openai_chunk("{}"), openai_chunk(usage=NS(prompt_tokens=1, completion_tokens=1))])])
+    provider._client = fake  # type: ignore[assignment]
+
+    [c async for c in provider.stream(ASK, output_schema=WEATHER)]
+
+    assert fake.calls[0]["response_format"]["json_schema"]["strict"] is True
+
+
+@requires_openai
+async def test_openai_refusal_becomes_assistant_text():
+    from agent_kit.providers.openai import OpenAIProvider
+
+    provider = OpenAIProvider(api_key="test")
+    refusal = openai_response(None)
+    refusal.choices[0].message.refusal = "I can't help with that."
+    provider._client = FakeOpenAI([refusal])  # type: ignore[assignment]
+
+    turn = await provider.complete(ASK, output_schema=WEATHER)
+
+    assert turn.message_out is not None
+    assert turn.message_out.content == "I can't help with that."
+
+
+@requires_openai
+def test_ollama_inherits_structured_output_support():
+    from agent_kit.providers.ollama import OllamaProvider
+
+    assert OllamaProvider().supports_structured_output is True

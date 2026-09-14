@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from agent_kit.exceptions import ProviderError
 from agent_kit.providers.base import ProviderConfig
 from agent_kit.providers.pricing import lookup_rates
 from agent_kit.types import CostSummary, Message, ToolCall, ToolSchema, Turn
+
+if TYPE_CHECKING:
+    from agent_kit.output import OutputSpec
 
 try:
     import openai
@@ -53,6 +56,14 @@ def _to_openai_tools(schemas: list[ToolSchema]) -> list[dict[str, Any]]:
         }
         for s in schemas
     ]
+
+
+def _apply_response_format(call_kwargs: dict[str, Any], output_schema: OutputSpec[Any] | None) -> None:
+    if output_schema is not None:
+        call_kwargs["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": output_schema.name, "schema": output_schema.json_schema, "strict": True},
+        }
 
 
 def _messages_to_openai(messages: list[Message]) -> list[dict[str, Any]]:
@@ -101,6 +112,8 @@ class OpenAIProvider:
         )
     """
 
+    supports_structured_output = True
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -137,6 +150,7 @@ class OpenAIProvider:
         tools: list[ToolSchema] | None = None,
         system: str | None = None,
         max_tokens: int = 4096,
+        output_schema: OutputSpec[Any] | None = None,
         **kwargs: Any,
     ) -> Turn:
         resolved_model = model or self.config.default_model
@@ -155,6 +169,7 @@ class OpenAIProvider:
         if tools:
             call_kwargs["tools"] = _to_openai_tools(tools)
             call_kwargs["tool_choice"] = "auto"
+        _apply_response_format(call_kwargs, output_schema)
 
         t0 = time.monotonic()
         try:
@@ -189,7 +204,8 @@ class OpenAIProvider:
             model=resolved_model,
         )
 
-        assistant_msg = Message(role="assistant", content=msg.content or "", tool_calls=tool_calls)
+        text = msg.content or getattr(msg, "refusal", None) or ""
+        assistant_msg = Message(role="assistant", content=text, tool_calls=tool_calls)
         return Turn(
             messages_in=messages,
             message_out=assistant_msg,
@@ -205,6 +221,7 @@ class OpenAIProvider:
         tools: list[ToolSchema] | None = None,
         system: str | None = None,
         max_tokens: int = 4096,
+        output_schema: OutputSpec[Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[str | Turn]:
         resolved_model = model or self.config.default_model
@@ -223,6 +240,7 @@ class OpenAIProvider:
         if tools:
             call_kwargs["tools"] = _to_openai_tools(tools)
             call_kwargs["tool_choice"] = "auto"
+        _apply_response_format(call_kwargs, output_schema)
 
         text_parts: list[str] = []
         pending: dict[int, dict[str, str]] = {}  # tool-call deltas by index
@@ -243,6 +261,10 @@ class OpenAIProvider:
                     if delta.content:
                         text_parts.append(delta.content)
                         yield delta.content
+                    refusal = getattr(delta, "refusal", None)
+                    if refusal:
+                        text_parts.append(refusal)
+                        yield refusal
                     for tc in delta.tool_calls or []:
                         slot = pending.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
                         if tc.id:

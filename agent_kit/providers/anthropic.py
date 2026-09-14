@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import time
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from agent_kit.exceptions import ProviderError
 from agent_kit.providers.base import ProviderConfig
 from agent_kit.providers.pricing import lookup_rates
 from agent_kit.types import CostSummary, Message, ToolCall, ToolSchema, Turn
+
+if TYPE_CHECKING:
+    from agent_kit.output import OutputSpec
 
 try:
     import anthropic
@@ -131,6 +134,15 @@ def _messages_to_anthropic(
     return system_text, result
 
 
+def _apply_output_schema(call_kwargs: dict[str, Any], output_schema: OutputSpec[Any] | None) -> None:
+    """Constrain the answer with output_config.format, keeping other output_config keys (effort)."""
+    if output_schema is not None:
+        call_kwargs["output_config"] = {
+            **call_kwargs.get("output_config", {}),
+            "format": {"type": "json_schema", "schema": output_schema.json_schema},
+        }
+
+
 def _turn_from_response(
     response: Any, messages: list[Message], model: str, duration_ms: int
 ) -> Turn:
@@ -183,6 +195,8 @@ class AnthropicProvider:
         provider = AnthropicProvider(default_model="claude-3-haiku-20240307")
     """
 
+    supports_structured_output = True
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -219,6 +233,7 @@ class AnthropicProvider:
         tools: list[ToolSchema] | None = None,
         system: str | None = None,
         max_tokens: int = 4096,
+        output_schema: OutputSpec[Any] | None = None,
         **kwargs: Any,
     ) -> Turn:
         resolved_model = model or self.config.default_model
@@ -235,6 +250,7 @@ class AnthropicProvider:
             call_kwargs["system"] = resolved_system
         if tools:
             call_kwargs["tools"] = _to_anthropic_tools(tools)
+        _apply_output_schema(call_kwargs, output_schema)
 
         t0 = time.monotonic()
         try:
@@ -253,6 +269,7 @@ class AnthropicProvider:
         tools: list[ToolSchema] | None = None,
         system: str | None = None,
         max_tokens: int = 4096,
+        output_schema: OutputSpec[Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[str | Turn]:
         resolved_model = model or self.config.default_model
@@ -269,6 +286,7 @@ class AnthropicProvider:
             call_kwargs["system"] = resolved_system
         if tools:
             call_kwargs["tools"] = _to_anthropic_tools(tools)
+        _apply_output_schema(call_kwargs, output_schema)
 
         t0 = time.monotonic()
         try:
