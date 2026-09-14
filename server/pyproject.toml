@@ -17,6 +17,7 @@ dependencies = [
     "alembic>=1.13",
     "pydantic>=2.5",
     "httpx>=0.27",
+    "opentelemetry-proto>=1.24",   # OTLP trace ingest
 ]
 
 [project.optional-dependencies]
@@ -24,6 +25,8 @@ dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
     "httpx>=0.27",              # TestClient
+    "opentelemetry-sdk>=1.24",  # OTLP wire-fidelity test
+    "opentelemetry-exporter-otlp-proto-common>=1.24",
     "ruff>=0.15,<0.17",
     "mypy>=1.9",
 ]

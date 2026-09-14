@@ -93,6 +93,9 @@ class AuditRun(Base):
     integrity: Mapped[str] = mapped_column(
         String(16), nullable=False, default="pending"
     )  # verified | failed | pending
+    chain_origin: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="client"
+    )  # client (built by the SDK) | ingest (built from OTLP spans)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
     organization: Mapped[Organization] = relationship("Organization", back_populates="audit_runs")
@@ -157,6 +160,8 @@ class ActiveRunCache(Base):
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cost_so_far_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    last_event_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     __table_args__ = (
         Index("ix_active_run_cache_org", "org_id"),

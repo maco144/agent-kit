@@ -45,6 +45,7 @@ class AuditRunSummary(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     integrity: str
+    chain_origin: str = "client"
     final_root_hash: str
 
     model_config = {"from_attributes": True}
