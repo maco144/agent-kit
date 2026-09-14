@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from datetime import datetime, timedelta
 
 import pytest
@@ -12,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from app.models import ActiveRunCache, AuditEvent, AuditRun, CloudEventLog
 from app.otlp.assembler import IDLE_TIMEOUT, run_id_for_trace
 from app.otlp.decode import JSON, PROTOBUF
-from tests.otlp_helpers import SpanSpec, json_body, new_trace_id, protobuf_body
+from tests.otlp_helpers import SpanSpec, json_body, new_trace_id, protobuf_body, recent_ns
 
 RESOURCE = {"service.name": "support-svc", "agentkit.project": "otlp"}
 
@@ -23,7 +22,7 @@ async def post(client, spans, content_type=PROTOBUF, resource=RESOURCE):
 
 
 def agent_trace(trace_id: str, *, tool_error: bool = False, root_error: bool = False) -> list[SpanSpec]:
-    now = time.time_ns()
+    now = recent_ns()
     root = SpanSpec(trace_id, "POST /chat", {"http.method": "POST"}, start_ns=now, duration_ms=900, error=root_error)
     agent = SpanSpec(trace_id, "invoke_agent support",
                      {"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "support"},
@@ -102,7 +101,7 @@ async def test_no_span_content_is_persisted(client, db):
 
 async def test_openinference_trace(client, db):
     trace_id = new_trace_id()
-    now = time.time_ns()
+    now = recent_ns()
     agent = SpanSpec(trace_id, "AgentExecutor", {"openinference.span.kind": "AGENT"}, start_ns=now, duration_ms=500)
     llm = SpanSpec(trace_id, "ChatOpenAI", {"openinference.span.kind": "LLM", "llm.model_name": "gpt-4o",
                                             "llm.token_count.prompt": 800, "llm.token_count.completion": 60},

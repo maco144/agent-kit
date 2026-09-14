@@ -21,6 +21,11 @@ def new_span_id() -> str:
     return os.urandom(8).hex()
 
 
+def recent_ns() -> int:
+    """A few seconds ago, so a span's minute bucket is never ahead of the metrics window."""
+    return time.time_ns() - 5_000_000_000
+
+
 @dataclass
 class SpanSpec:
     trace_id: str
@@ -28,7 +33,7 @@ class SpanSpec:
     attributes: dict[str, Any] = field(default_factory=dict)
     span_id: str = field(default_factory=new_span_id)
     parent: str = ""
-    start_ns: int = field(default_factory=time.time_ns)
+    start_ns: int = field(default_factory=recent_ns)
     duration_ms: int = 5
     error: bool = False
     error_message: str = "boom"
