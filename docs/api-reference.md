@@ -659,6 +659,68 @@ Create an alert rule with `"type": "budget_exceeded"` and `"config": {"budget_id
 
 ---
 
+## Compliance
+
+Evidence that supports record-keeping obligations (for example EU AI Act Article 12 logging and SOC 2 audit evidence). agent-kit is not a certification and makes no claim of legal compliance.
+
+### GET /.well-known/agentkit-signing-keys
+
+**No authentication.** Ed25519 public keys that sign evidence bundles and deletion receipts. Retired keys stay published so older bundles keep verifying.
+
+```json
+{"keys": [{"kid": "ak-3f9a2c1d0b7e", "alg": "Ed25519", "public_key": "<base64 32 bytes>", "created_at": "2026-09-14T00:00:00", "retired_at": null, "active": true}]}
+```
+
+Verifiers should fetch keys from your agent-kit endpoint (or a pinned copy) — never trust a key supplied inside a bundle.
+
+### GET /v1/compliance/export
+
+A signed evidence bundle (`application/zip`) of audit runs started in `[from, to)`.
+
+| Param | Description |
+|---|---|
+| `from`, `to` | ISO-8601 datetimes (UTC); required, `from` < `to` |
+| `project`, `agent_name` | Optional scope filters |
+
+| File | Contents |
+|---|---|
+| `manifest.json` | Format `agentkit-evidence-bundle/1`, org, scope, retention policy and active legal holds at export time, counts, SHA-256 of every other file, signing `kid` |
+| `manifest.sig` | `{"kid", "alg": "Ed25519", "signature"}` over the exact `manifest.json` bytes |
+| `runs.jsonl` | Run metadata: `chain_origin`, `final_root_hash`, `event_count`, `integrity`, timestamps |
+| `events.jsonl` | Every chain link (`prev_root`, `payload_hash`, `leaf_hash`, `timestamp`, `seq`) — hashes only |
+| `verification.json` | Each chain re-verified at export time |
+| `deletions.jsonl` | Signed deletion receipts for runs purged in the period |
+
+`400` if `from >= to` or the scope holds more than 10,000 runs (narrow the range). Verify with `agent-kit verify` (`pip install agent-kit[compliance]`).
+
+### GET /v1/compliance/retention · PUT /v1/compliance/retention
+
+```json
+{"tier": "enterprise", "audit_retention_days": 2555, "source": "override", "configurable": true}
+```
+
+| Tier | Audit retention |
+|---|---|
+| Free | 7 days |
+| Pro | 90 days |
+| Enterprise | 365 days by default; `PUT {"audit_retention_days": 1..2555}` (or `null` to reset) |
+
+`PUT` returns `403` below enterprise and `400` out of range. Retention applies to audit runs and events only; purging requires the background worker (`ENABLE_ALERT_WORKER=1`).
+
+### Legal holds
+
+- `GET /v1/compliance/holds` — `{"holds": [{"id", "project", "run_id", "reason", "created_at", "released_at"}]}`
+- `POST /v1/compliance/holds` — `{"project": "claims", "reason": "case #4471"}` or `{"run_id": "…", "reason": "…"}`; exactly one scope (`400` otherwise, `404` for an unknown run)
+- `POST /v1/compliance/holds/{id}/release`
+
+Active holds block retention purges of matching runs.
+
+### GET /v1/compliance/deletions
+
+`?from=&to=` (on `deleted_at`). Each receipt records `run_id, org_id, project, agent_name, final_root_hash, event_count, chain_origin, started_at, completed_at, deleted_at, reason` plus `kid` and `signature`. The signature covers `json.dumps(<those fields>, sort_keys=True, separators=(",", ":"))` encoded as UTF-8, datetimes ISO-8601 or `null`.
+
+---
+
 ## Support
 
 ### GET /v1/support/sla

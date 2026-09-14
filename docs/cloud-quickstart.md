@@ -130,6 +130,32 @@ Before every model call the agent checks both. When a ceiling is reached it rais
 
 ---
 
+## Evidence for auditors
+
+```bash
+# Export a signed evidence bundle for September
+curl -o evidence.zip -H "Authorization: Bearer $AGENTKIT_API_KEY" \
+  "https://ingest.agentkit.io/v1/compliance/export?from=2026-09-01T00:00:00&to=2026-10-01T00:00:00"
+
+# Anyone can verify it offline against agent-kit's published keys
+pip install "agent-kit[compliance]"
+agent-kit verify evidence.zip --keys-url https://ingest.agentkit.io/.well-known/agentkit-signing-keys
+```
+
+The bundle holds every audit chain link for the period, a re-verification report, retention policy and legal holds in force, and signed receipts for anything purged. `agent-kit verify` checks the signature, every file hash, every chain, and every receipt, and exits non-zero on any failure. It supports record-keeping obligations such as EU AI Act Article 12 and SOC 2 evidence requests; it is not a certification.
+
+```bash
+# Enterprise: keep audit data for 7 years
+curl -X PUT -H "Authorization: Bearer $AGENTKIT_API_KEY" -H "Content-Type: application/json" \
+  https://ingest.agentkit.io/v1/compliance/retention -d '{"audit_retention_days": 2555}'
+
+# Freeze a project's audit trail during an investigation
+curl -X POST -H "Authorization: Bearer $AGENTKIT_API_KEY" -H "Content-Type: application/json" \
+  https://ingest.agentkit.io/v1/compliance/holds -d '{"project": "claims", "reason": "case #4471"}'
+```
+
+---
+
 ## Common patterns
 
 ### Multiple agents, one reporter per agent

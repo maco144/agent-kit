@@ -72,7 +72,7 @@ Implementation plan: `docs/superpowers/plans/2026-09-13-tier1-harness-fundamenta
       included) reach audit, fleet metrics, alerts, and SLA context; chain built at ingest.
 - [x] **3.2 Cost circuit breaker** — design: `specs/09-cost-circuit-breaker.md`. per-run and per-org dollar ceilings that trip like the failure
       breaker and fire an alert. Reuses the breaker, cost tracking, and alerting already built.
-- [ ] **3.3 Compliance exports** — design: `specs/10-compliance-exports.md`. package the hash-chained audit and server-side verification as
+- [x] **3.3 Compliance exports** — design: `specs/10-compliance-exports.md`. package the hash-chained audit and server-side verification as
       signed exports with retention policies for regulated buyers (EU AI Act record-keeping,
       SOC 2 evidence).
 - [ ] **3.4 Tool-output injection scanning** — an `after_tool` policy that screens tool results for

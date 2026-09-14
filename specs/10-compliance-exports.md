@@ -1,6 +1,6 @@
 # Spec 10 — Compliance Exports: Signed Evidence Bundles and Retention
 
-Status: **approved design** · Written 2026-09-14 · Roadmap item: 3.3 (`specs/06-harness-roadmap.md`)
+Status: **implemented** · Written 2026-09-14 · Roadmap item: 3.3 (`specs/06-harness-roadmap.md`)
 
 ## Goal
 

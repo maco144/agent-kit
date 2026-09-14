@@ -80,7 +80,9 @@ python scripts/seed_org.py
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DATABASE_URL` | Yes (production) | `sqlite+aiosqlite:///./agentkit_cloud.db` | SQLAlchemy async URL (e.g. `postgresql+asyncpg://user:pass@host/db`). SQLite URLs auto-create tables on startup; anything else expects `alembic upgrade head`. |
-| `ENABLE_ALERT_WORKER` | No | unset | `1` or `true` runs the 60-second alert evaluator in this process |
+| `ENABLE_ALERT_WORKER` | No | unset | `1` or `true` runs the 60-second worker in this process: alert evaluation, budget evaluation, and audit retention purges |
+| `AGENTKIT_SIGNING_KEY` | Recommended | unset | Base64 32-byte Ed25519 seed that signs evidence bundles and deletion receipts; never stored. Generate with `python -c "import base64,os;print(base64.b64encode(os.urandom(32)).decode())"`. Unset → a key is generated and its seed stored in the database |
+| `AGENTKIT_SIGNING_KEY_ID` | No | derived | Key ID published for the env key (default `ak-` + 12 hex of its public key hash). Changing the key retires the old one but keeps it published |
 | `SMTP_HOST` | For email alerts | unset | SMTP server. Unset = email channels log instead of sending |
 | `SMTP_PORT` | No | `587` (`465` with `ssl`) | SMTP port |
 | `SMTP_SECURITY` | No | `starttls` | `starttls`, `ssl` (implicit TLS), or `none` |
