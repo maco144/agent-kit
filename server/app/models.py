@@ -287,6 +287,32 @@ class AlertFiring(Base):
 
 
 # ---------------------------------------------------------------------------
+# Budgets (cost circuit breaker)
+# ---------------------------------------------------------------------------
+
+
+class Budget(Base):
+    """A spend ceiling for matching agents over a UTC calendar period."""
+    __tablename__ = "budgets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    project: Mapped[str] = mapped_column(String(255), nullable=False, default="*")
+    agent_name: Mapped[str] = mapped_column(String(255), nullable=False, default="*")
+    period: Mapped[str] = mapped_column(String(16), nullable=False)  # daily | weekly | monthly
+    limit_usd: Mapped[float] = mapped_column(Float, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    tripped_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now, nullable=False)
+
+    __table_args__ = (
+        Index("ix_budgets_org_enabled", "org_id", "enabled"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Raw event log (all event types, for dashboard / metrics pipeline)
 # ---------------------------------------------------------------------------
 

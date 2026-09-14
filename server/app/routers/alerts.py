@@ -26,7 +26,7 @@ router = APIRouter(prefix="/v1/alerts", tags=["alerts"])
 
 _VALID_CHANNEL_TYPES = {"email", "slack", "pagerduty", "webhook"}
 _VALID_RULE_TYPES = {
-    "circuit_breaker_open", "cost_anomaly", "error_rate", "audit_integrity_failure"
+    "circuit_breaker_open", "cost_anomaly", "error_rate", "audit_integrity_failure", "budget_exceeded",
 }
 
 
