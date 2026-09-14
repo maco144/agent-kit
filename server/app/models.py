@@ -45,6 +45,9 @@ class Organization(Base):
     plan_metadata: Mapped[dict] = mapped_column(
         JSON, nullable=False, default=dict
     )  # CSE name, slack channel, custom SLA terms, etc.
+    audit_retention_days: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )  # enterprise override; None = tier default
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
     api_keys: Mapped[list[ApiKey]] = relationship("ApiKey", back_populates="organization")
@@ -310,6 +313,61 @@ class Budget(Base):
     __table_args__ = (
         Index("ix_budgets_org_enabled", "org_id", "enabled"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Compliance: signing keys, legal holds, deletion receipts
+# ---------------------------------------------------------------------------
+
+
+class SigningKey(Base):
+    """Ed25519 keys that sign evidence bundles and deletion receipts. Never deleted."""
+    __tablename__ = "signing_keys"
+
+    kid: Mapped[str] = mapped_column(String(64), primary_key=True)
+    public_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    private_key: Mapped[str | None] = mapped_column(String(128), nullable=True)  # None for env keys
+    source: Mapped[str] = mapped_column(String(16), nullable=False)  # env | generated
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class LegalHold(Base):
+    """Blocks retention purges for a project or a single run until released."""
+    __tablename__ = "legal_holds"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    project: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (Index("ix_legal_holds_org_released", "org_id", "released_at"),)
+
+
+class DeletionReceipt(Base):
+    """Signed proof that an audit run existed and was disposed of. Never purged."""
+    __tablename__ = "deletion_receipts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    project: Mapped[str] = mapped_column(String(255), nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    final_root_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    chain_origin: Mapped[str] = mapped_column(String(16), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    reason: Mapped[str] = mapped_column(String(32), nullable=False)
+    kid: Mapped[str] = mapped_column(String(64), nullable=False)
+    signature: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    __table_args__ = (Index("ix_deletion_receipts_org_deleted", "org_id", "deleted_at"),)
 
 
 # ---------------------------------------------------------------------------
