@@ -5,10 +5,11 @@ from __future__ import annotations
 import dataclasses
 import enum
 import json
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Literal
 
 import pytest
 from pydantic import BaseModel, Field
+from typing_extensions import TypedDict  # pydantic requires it on Python < 3.12
 
 from agent_kit.output import OutputParseError, OutputSpec
 
