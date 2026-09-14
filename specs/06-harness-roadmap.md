@@ -68,7 +68,7 @@ Implementation plan: `docs/superpowers/plans/2026-09-13-tier1-harness-fundamenta
 
 - [x] **3.1a Harness adapters** — Claude Agent SDK and OpenAI Agents SDK runs report to Cloud with a
       client-side audit chain and no server change (`specs/07-harness-adapters.md`).
-- [ ] **3.1b OTLP ingest** — accept OpenTelemetry GenAI spans so harnesses in any language (TypeScript
+- [ ] **3.1b OTLP ingest** — design: `specs/08-otlp-ingest.md`. Accept OpenTelemetry GenAI spans so harnesses in any language (TypeScript
       included) reach audit, fleet metrics, alerts, and SLA context; chain built at ingest.
 - [ ] **3.2 Cost circuit breaker** — per-run and per-org dollar ceilings that trip like the failure
       breaker and fire an alert. Reuses the breaker, cost tracking, and alerting already built.
