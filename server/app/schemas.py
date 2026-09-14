@@ -399,3 +399,63 @@ class BudgetOut(BaseModel):
 
 class BudgetList(BaseModel):
     budgets: list[BudgetOut]
+
+
+# ---------------------------------------------------------------------------
+# Compliance
+# ---------------------------------------------------------------------------
+
+
+class RetentionOut(BaseModel):
+    tier: str
+    audit_retention_days: int
+    source: str
+    configurable: bool
+
+
+class UpdateRetentionRequest(BaseModel):
+    audit_retention_days: int | None
+
+
+class CreateHoldRequest(BaseModel):
+    project: str | None = None
+    run_id: str | None = None
+    reason: str
+
+
+class HoldOut(BaseModel):
+    id: str
+    project: str | None
+    run_id: str | None
+    reason: str
+    created_at: datetime
+    released_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class HoldList(BaseModel):
+    holds: list[HoldOut]
+
+
+class DeletionReceiptOut(BaseModel):
+    id: str
+    run_id: str
+    org_id: str
+    project: str
+    agent_name: str
+    final_root_hash: str
+    event_count: int
+    chain_origin: str
+    started_at: datetime | None
+    completed_at: datetime | None
+    deleted_at: datetime
+    reason: str
+    kid: str
+    signature: str
+
+    model_config = {"from_attributes": True}
+
+
+class DeletionList(BaseModel):
+    deletions: list[DeletionReceiptOut]

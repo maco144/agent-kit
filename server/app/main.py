@@ -37,6 +37,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                         await evaluate_all_rules(db)
                         from app.budgets import evaluate_all_budgets
                         await evaluate_all_budgets(db)
+                        from app.compliance.retention import purge_expired
+                        await purge_expired(db)
                         await db.commit()
                 except Exception as exc:
                     _log.warning("Alert worker error: %s", exc)

@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import base64
+import uuid
+from datetime import datetime, timedelta
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from app.compliance import signing
-from app.models import SigningKey
+from app.compliance.retention import effective_retention, purge_expired, receipt_fields
+from app.models import AuditEvent, AuditRun, DeletionReceipt, LegalHold, Organization, SigningKey
 
 
 def verify_sig(public_key_b64: str, signature_b64: str, data: bytes) -> None:
@@ -17,8 +21,6 @@ def verify_sig(public_key_b64: str, signature_b64: str, data: bytes) -> None:
 
 
 async def keys_by_kid(db) -> dict[str, SigningKey]:
-    from sqlalchemy import select
-
     return {k.kid: k for k in (await db.execute(select(SigningKey))).scalars().all()}
 
 
@@ -86,3 +88,125 @@ async def test_keys_endpoint_needs_no_auth(db):
     assert resp.status_code == 200
     keys = resp.json()["keys"]
     assert keys and all(k["alg"] == "Ed25519" and len(base64.b64decode(k["public_key"])) == 32 for k in keys)
+
+
+def audit_run(org_id: str, project: str = "prod", completed_days_ago: float | None = 10, created_days_ago: float = 10,
+              now: datetime | None = None, events: int = 2) -> tuple[AuditRun, list[AuditEvent]]:
+    from app.audit_chain import GENESIS_ROOT, append_event
+
+    now = now or datetime.utcnow()
+    run = AuditRun(org_id=org_id, project=project, agent_name="support", run_id=str(uuid.uuid4()),
+                   final_root_hash=GENESIS_ROOT, event_count=0, integrity="verified",
+                   started_at=now - timedelta(days=created_days_ago),
+                   completed_at=now - timedelta(days=completed_days_ago) if completed_days_ago is not None else None,
+                   created_at=now - timedelta(days=created_days_ago))
+    chain = [append_event(run, event_id=str(uuid.uuid4()), event_type=f"e{i}", actor="a", payload={"i": i},
+                          timestamp=now - timedelta(days=created_days_ago, seconds=-i)) for i in range(events)]
+    return run, chain
+
+
+async def add_runs(db, *pairs):
+    for run, events in pairs:
+        db.add(run)
+        db.add_all(events)
+    await db.commit()
+
+
+def test_effective_retention_by_tier():
+    assert effective_retention(Organization(name="f", tier="free")) == (7, "tier")
+    assert effective_retention(Organization(name="p", tier="pro", audit_retention_days=3000)) == (90, "tier")
+    assert effective_retention(Organization(name="e", tier="enterprise")) == (365, "tier")
+    assert effective_retention(Organization(name="e", tier="enterprise", audit_retention_days=2555)) == (2555, "override")
+
+
+async def test_purge_deletes_expired_unheld_runs_with_verifiable_receipts(db, org_and_key):
+    org, _ = org_and_key  # free tier: 7 days
+    expired = audit_run(org.id, completed_days_ago=10)
+    fresh = audit_run(org.id, completed_days_ago=2, created_days_ago=2)
+    abandoned = audit_run(org.id, completed_days_ago=None, created_days_ago=30)
+    held_project = audit_run(org.id, project="claims", completed_days_ago=10)
+    held_run = audit_run(org.id, completed_days_ago=10)
+    await add_runs(db, expired, fresh, abandoned, held_project, held_run)
+    db.add_all([
+        LegalHold(org_id=org.id, project="claims", reason="case #4471"),
+        LegalHold(org_id=org.id, run_id=held_run[0].run_id, reason="incident review"),
+        LegalHold(org_id=org.id, project="prod", reason="released hold", released_at=datetime.utcnow()),
+    ])
+    await db.commit()
+
+    purged = await purge_expired(db)
+
+    remaining = set((await db.execute(select(AuditRun.run_id).where(AuditRun.org_id == org.id))).scalars().all())
+    assert remaining == {fresh[0].run_id, held_project[0].run_id, held_run[0].run_id}
+    assert purged >= 2
+    leftover_events = (await db.execute(select(AuditEvent).where(
+        AuditEvent.run_id.in_([expired[0].run_id, abandoned[0].run_id])))).scalars().all()
+    assert leftover_events == []
+
+    receipts = {r.run_id: r for r in (await db.execute(
+        select(DeletionReceipt).where(DeletionReceipt.org_id == org.id))).scalars().all()}
+    assert set(receipts) == {expired[0].run_id, abandoned[0].run_id}
+    receipt = receipts[expired[0].run_id]
+    assert (receipt.final_root_hash, receipt.event_count, receipt.reason) == (expired[0].final_root_hash, 2, "retention")
+    key = (await db.execute(select(SigningKey).where(SigningKey.kid == receipt.kid))).scalar_one()
+    verify_sig(key.public_key, receipt.signature, signing.canonical_bytes(receipt_fields(receipt)))
+
+
+async def test_enterprise_override_extends_retention(db, org_and_key):
+    org, _ = org_and_key
+    org.tier = "enterprise"
+    org.audit_retention_days = 2555
+    old = audit_run(org.id, completed_days_ago=400)
+    await add_runs(db, old)
+
+    await purge_expired(db)
+
+    assert (await db.execute(select(AuditRun).where(AuditRun.run_id == old[0].run_id))).scalar_one_or_none() is not None
+
+
+async def test_retention_api(client, db, org_and_key):
+    org, _ = org_and_key
+    assert (await client.get("/v1/compliance/retention")).json() == {
+        "tier": "free", "audit_retention_days": 7, "source": "tier", "configurable": False,
+    }
+    assert (await client.put("/v1/compliance/retention", json={"audit_retention_days": 30})).status_code == 403
+
+    org.tier = "enterprise"
+    await db.commit()
+    assert (await client.put("/v1/compliance/retention", json={"audit_retention_days": 0})).status_code == 400
+    assert (await client.put("/v1/compliance/retention", json={"audit_retention_days": 2556})).status_code == 400
+    ok = await client.put("/v1/compliance/retention", json={"audit_retention_days": 2555})
+    assert ok.json() == {"tier": "enterprise", "audit_retention_days": 2555, "source": "override", "configurable": True}
+    reset = await client.put("/v1/compliance/retention", json={"audit_retention_days": None})
+    assert reset.json()["audit_retention_days"] == 365
+
+
+async def test_holds_api(client, db, org_and_key):
+    org, _ = org_and_key
+    run, events = audit_run(org.id)
+    await add_runs(db, (run, events))
+
+    assert (await client.post("/v1/compliance/holds", json={"reason": "no scope"})).status_code == 400
+    assert (await client.post("/v1/compliance/holds", json={"project": "a", "run_id": run.run_id, "reason": "both"})).status_code == 400
+    assert (await client.post("/v1/compliance/holds", json={"run_id": str(uuid.uuid4()), "reason": "unknown"})).status_code == 404
+
+    project_hold = (await client.post("/v1/compliance/holds", json={"project": "claims", "reason": "case #4471"})).json()
+    run_hold = (await client.post("/v1/compliance/holds", json={"run_id": run.run_id, "reason": "incident"})).json()
+    assert project_hold["released_at"] is None
+
+    released = (await client.post(f"/v1/compliance/holds/{run_hold['id']}/release")).json()
+    assert released["released_at"] is not None
+    holds = (await client.get("/v1/compliance/holds")).json()["holds"]
+    assert {h["id"] for h in holds} == {project_hold["id"], run_hold["id"]}
+    assert (await client.post(f"/v1/compliance/holds/{uuid.uuid4()}/release")).status_code == 404
+
+
+async def test_deletions_api(client, db, org_and_key):
+    org, _ = org_and_key
+    await add_runs(db, audit_run(org.id, completed_days_ago=20))
+    await purge_expired(db)
+
+    deletions = (await client.get("/v1/compliance/deletions")).json()["deletions"]
+
+    assert len(deletions) == 1
+    assert {"run_id", "final_root_hash", "event_count", "deleted_at", "kid", "signature"} <= set(deletions[0])
