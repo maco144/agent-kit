@@ -73,7 +73,7 @@ def encode_response(content_type: str, rejected: int, error_message: str) -> byt
         if rejected:
             response.partial_success.rejected_spans = rejected
             response.partial_success.error_message = error_message
-        return response.SerializeToString()
+        return bytes(response.SerializeToString())
     if not rejected:
         return b"{}"
     return json.dumps(

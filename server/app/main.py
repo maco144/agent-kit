@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
-from app.routers import alerts, audit, ingest, metrics, support
+from app.routers import alerts, audit, ingest, metrics, otlp, support
 
 
 @asynccontextmanager
@@ -73,6 +73,7 @@ app.include_router(audit.router)
 app.include_router(metrics.router)
 app.include_router(alerts.router)
 app.include_router(support.router)
+app.include_router(otlp.router)
 
 
 @app.get("/healthz", tags=["meta"])
