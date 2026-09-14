@@ -166,3 +166,13 @@ async def _rules(org_id: str, db: AsyncSession) -> list[AlertRule]:
         )
     )
     return list(result.scalars().all())
+
+
+async def evaluate_after_ingest(org_id: str, db: AsyncSession) -> None:
+    """Called after an ingest commit. Never raises."""
+    try:
+        await evaluate_budgets(org_id, db)
+        await db.commit()
+    except Exception as exc:
+        logger.warning("Budget evaluation after ingest failed for org %s: %s", org_id, exc)
+        await db.rollback()

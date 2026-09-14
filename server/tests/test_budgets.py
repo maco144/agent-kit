@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gzip
+import json
 import uuid
 from datetime import datetime, timedelta
 
@@ -147,3 +149,98 @@ async def test_budget_exceeded_is_a_valid_alert_rule_type(client):
         "name": "budgets", "type": "budget_exceeded", "config": {"budget_id": "*"}, "channel_ids": [],
     })
     assert resp.status_code == 201
+
+
+async def test_budget_crud_and_validation(client):
+    created = await client.post("/v1/budgets", json={"name": "support", "period": "daily", "limit_usd": 25,
+                                                      "project": "prod", "agent_name": "support"})
+    assert created.status_code == 201
+    budget = created.json()
+    assert (budget["limit_usd"], budget["spent_usd"], budget["tripped"]) == (25.0, 0.0, False)
+    assert budget["resets_at"] > budget["period_start"]
+
+    assert (await client.post("/v1/budgets", json={"name": "x", "period": "hourly", "limit_usd": 1})).status_code == 400
+    assert (await client.post("/v1/budgets", json={"name": "x", "period": "daily", "limit_usd": 0})).status_code == 400
+
+    listed = (await client.get("/v1/budgets")).json()["budgets"]
+    assert [b["id"] for b in listed] == [budget["id"]]
+
+    patched = await client.patch(f"/v1/budgets/{budget['id']}", json={"limit_usd": 40, "enabled": False})
+    assert (patched.json()["limit_usd"], patched.json()["enabled"]) == (40.0, False)
+    assert (await client.patch(f"/v1/budgets/{budget['id']}", json={"period": "yearly"})).status_code == 400
+
+    assert (await client.delete(f"/v1/budgets/{budget['id']}")).status_code == 204
+    assert (await client.get("/v1/budgets")).json()["budgets"] == []
+    assert (await client.delete(f"/v1/budgets/{budget['id']}")).status_code == 404
+
+
+async def test_status_endpoint_scopes_to_agent(client):
+    for body in [
+        {"name": "org", "period": "monthly", "limit_usd": 500},
+        {"name": "support", "period": "daily", "limit_usd": 20, "agent_name": "support"},
+        {"name": "billing", "period": "daily", "limit_usd": 20, "agent_name": "billing"},
+        {"name": "staging", "period": "daily", "limit_usd": 20, "project": "staging"},
+        {"name": "off", "period": "daily", "limit_usd": 20, "enabled": False},
+    ]:
+        assert (await client.post("/v1/budgets", json=body)).status_code == 201
+
+    resp = await client.get("/v1/budgets/status", params={"project": "prod", "agent_name": "support"})
+
+    assert sorted(b["name"] for b in resp.json()["budgets"]) == ["org", "support"]
+
+
+def _events(run_id: str, cost: float) -> bytes:
+    now = datetime.utcnow().isoformat()
+    base = {"run_id": run_id, "agent_name": "support", "project": "prod", "occurred_at": now}
+    events = [
+        {**base, "event_id": str(uuid.uuid4()), "event_type": "run_start", "payload": {"model": "claude-opus-5"}},
+        {**base, "event_id": str(uuid.uuid4()), "event_type": "turn_complete",
+         "payload": {"input_tokens": 1, "output_tokens": 1, "cost_usd": cost}},
+    ]
+    return gzip.compress("\n".join(json.dumps(e) for e in events).encode())
+
+
+async def test_ingest_trips_budget_and_patch_closes_it(client, db, org_and_key):
+    org, _ = org_and_key
+    budget = (await client.post("/v1/budgets", json={"name": "support", "period": "daily",
+                                                      "limit_usd": 1.0, "agent_name": "support"})).json()
+    rule = (await client.post("/v1/alerts/rules", json={"name": "b", "type": "budget_exceeded",
+                                                         "config": {"budget_id": budget["id"]}, "channel_ids": []})).json()
+
+    resp = await client.post("/v1/events", content=_events(str(uuid.uuid4()), 1.25),
+                             headers={"Content-Encoding": "gzip", "Content-Type": "application/x-ndjson"})
+    assert resp.status_code == 202
+
+    status = (await client.get("/v1/budgets/status", params={"project": "prod", "agent_name": "support"})).json()
+    assert status["budgets"][0]["tripped"] is True
+    assert status["budgets"][0]["spent_usd"] == pytest.approx(1.25)
+    firing = (await db.execute(select(AlertFiring).where(AlertFiring.rule_id == rule["id"]))).scalar_one()
+    assert firing.state == "firing"
+
+    patched = (await client.patch(f"/v1/budgets/{budget['id']}", json={"limit_usd": 5.0})).json()
+    assert patched["tripped"] is False
+    await db.refresh(firing)
+    assert firing.state == "resolved"
+
+
+async def test_delete_resolves_active_alerts(client, db):
+    budget = (await client.post("/v1/budgets", json={"name": "b", "period": "daily", "limit_usd": 0.5,
+                                                      "agent_name": "support"})).json()
+    rule = (await client.post("/v1/alerts/rules", json={"name": "r", "type": "budget_exceeded",
+                                                         "config": {"budget_id": budget["id"]}, "channel_ids": []})).json()
+    await client.post("/v1/events", content=_events(str(uuid.uuid4()), 1.0),
+                      headers={"Content-Encoding": "gzip", "Content-Type": "application/x-ndjson"})
+
+    await client.delete(f"/v1/budgets/{budget['id']}")
+
+    firing = (await db.execute(select(AlertFiring).where(AlertFiring.rule_id == rule["id"]))).scalar_one()
+    assert firing.state == "resolved"
+
+
+async def test_budgets_require_auth():
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as anon:
+        assert (await anon.get("/v1/budgets")).status_code == 401

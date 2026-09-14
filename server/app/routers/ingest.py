@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit_chain import verify_chain
 from app.auth import get_current_org
+from app.budgets import evaluate_after_ingest
 from app.database import get_db
 from app.models import (
     ActiveRunCache,
@@ -75,6 +76,7 @@ async def ingest_events(
             continue
 
     await db.commit()
+    await evaluate_after_ingest(org.id, db)
 
     # Trigger async verification for any audit runs received in this batch
     audit_run_ids = {

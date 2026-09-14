@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
-from app.routers import alerts, audit, ingest, metrics, otlp, support
+from app.routers import alerts, audit, budgets, ingest, metrics, otlp, support
 
 
 @asynccontextmanager
@@ -35,6 +35,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 try:
                     async with SessionLocal() as db:
                         await evaluate_all_rules(db)
+                        from app.budgets import evaluate_all_budgets
+                        await evaluate_all_budgets(db)
                         await db.commit()
                 except Exception as exc:
                     _log.warning("Alert worker error: %s", exc)
@@ -74,6 +76,7 @@ app.include_router(metrics.router)
 app.include_router(alerts.router)
 app.include_router(support.router)
 app.include_router(otlp.router)
+app.include_router(budgets.router)
 
 
 @app.get("/healthz", tags=["meta"])

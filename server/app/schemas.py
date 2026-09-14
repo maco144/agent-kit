@@ -356,3 +356,46 @@ class SupportContext(BaseModel):
 class UpdateTierRequest(BaseModel):
     tier: str  # free | pro | enterprise
     plan_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Budgets
+# ---------------------------------------------------------------------------
+
+
+class CreateBudgetRequest(BaseModel):
+    name: str
+    period: str
+    limit_usd: float
+    project: str = "*"
+    agent_name: str = "*"
+    enabled: bool = True
+
+
+class UpdateBudgetRequest(BaseModel):
+    name: str | None = None
+    period: str | None = None
+    limit_usd: float | None = None
+    project: str | None = None
+    agent_name: str | None = None
+    enabled: bool | None = None
+
+
+class BudgetOut(BaseModel):
+    id: str
+    name: str
+    project: str
+    agent_name: str
+    period: str
+    limit_usd: float
+    enabled: bool
+    spent_usd: float
+    remaining_usd: float
+    tripped: bool
+    tripped_at: datetime | None
+    period_start: datetime
+    resets_at: datetime
+
+
+class BudgetList(BaseModel):
+    budgets: list[BudgetOut]

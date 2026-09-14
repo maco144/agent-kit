@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_org
+from app.budgets import evaluate_after_ingest
 from app.database import get_db
 from app.models import Organization
 from app.otlp.assembler import assemble
@@ -45,6 +46,8 @@ async def export_traces(
         # Another request extended the same run concurrently; exporters retry 5xx.
         await db.rollback()
         return Response(status_code=503, headers={"Retry-After": "1"})
+
+    await evaluate_after_ingest(org.id, db)
 
     return Response(
         content=encode_response(content_type, batch.rejected, batch.error_message),
