@@ -1,6 +1,6 @@
 # Spec 12 — MCP Client
 
-Status: **approved design** · Written 2026-09-14 · Roadmap item: 2.1 (`specs/06-harness-roadmap.md`)
+Status: **implemented** · Written 2026-09-14 · Roadmap item: 2.1 (`specs/06-harness-roadmap.md`)
 
 ## Goal
 
@@ -53,7 +53,7 @@ def http(name: str, url: str, headers: dict[str, str] | None = None,
 class MCPToolset:
     def __init__(self, *servers: StdioServer | HttpServer, prefix: bool = True,
                  include: Iterable[str] | None = None, call_timeout_s: float = 60.0,
-                 errlog: TextIO | None = None) -> None
+                 connect_timeout_s: float = 30.0, errlog: TextIO | None = None) -> None
     async def __aenter__(self) -> MCPToolset
     async def __aexit__(self, *exc: object) -> None
     @property
@@ -69,14 +69,17 @@ class MCPConnectionError(AgentKitError): ...      # agent_kit.exceptions
 def require_approval_unless_read_only(toolset: MCPToolset, reason: str | None = None) -> BeforeToolHook
 ```
 
-`include` filters by agent-kit tool name (after prefixing). `errlog` receives stdio servers' stderr
-(default `sys.stderr`).
+`include` filters by agent-kit tool name (after prefixing). `connect_timeout_s` bounds `initialize` plus
+tool listing per server. `errlog` receives stdio servers' stderr (default `sys.stderr`) and must be a
+real file — it is handed to the subprocess.
 
 ## Behaviour
 
 ### Connection
 
-- On enter, all servers connect concurrently: open the transport, `ClientSession.initialize()`, then
+- On enter, servers connect **sequentially** (amended during implementation: the MCP SDK's transports hold
+  anyio task groups that must be closed by the task that opened them), each inside its own exit stack
+  that joins the toolset's only on success: open the transport, `ClientSession.initialize()`, then
   `list_tools()` following `next_cursor` until exhausted.
 - A `required` server that fails (transport error, initialize failure, listing failure) → close every
   already-opened server, then raise `MCPConnectionError("<server>: <cause>")`. A server with

@@ -20,6 +20,7 @@ demo — running agents you can trust, afford, and prove things about:
 | Tamper-evident audit chain | Hash-linked record of every LLM call and tool call; verify locally, re-verified server-side, JSONL/CSV export |
 | Cost per turn | Token- and cache-aware USD for current Claude and OpenAI models; unpriced models are logged, not silently $0 |
 | Cost circuit breaker | Per-run caps and daily / weekly / monthly fleet budgets stop agents before the next model call, and alert when tripped |
+| MCP tools | Tools from any MCP server over stdio or streamable HTTP, governed by the same allowlist, hooks, budgets, and audit |
 | Hooks and approval gates | Block tools, require human approval, redact tool output, or stop runs — fail-closed, every decision audited |
 | Evidence bundles | Signed exports of audit chains that anyone can verify offline (`agent-kit verify`), with retention, legal holds, and signed deletion receipts |
 | Self-hostable ops backend | Fleet metrics, alerting (Slack, PagerDuty, webhook, SMTP), and SLA context — see [agent-kit Cloud](#agent-kit-cloud) |
@@ -424,6 +425,34 @@ an `ask` with no approver, a denied or timed-out approval — all deny. A denied
 as a tool error it can work around; `stop_run=True` raises `RunStoppedByHookError`. Every decision is an
 audit event (`tool_denied`, `approval_requested`, `approval_granted`, `approval_denied`,
 `tool_output_replaced`, `llm_call_denied`). Full example: [`examples/approval_gate.py`](examples/approval_gate.py).
+
+---
+
+## MCP tools
+
+Use tools from any [Model Context Protocol](https://modelcontextprotocol.io) server — `pip install agent-kit[mcp]`:
+
+```python
+from agent_kit.tools.mcp import MCPToolset, http, require_approval_unless_read_only, stdio
+
+async with MCPToolset(
+    stdio("fs", "npx", "-y", "@modelcontextprotocol/server-filesystem", "/srv/docs"),
+    http("linear", "https://mcp.linear.app/mcp", headers={"Authorization": f"Bearer {key}"}),
+) as mcp:
+    agent = Agent(provider, tools=[*mcp.tools, my_tool], config=AgentConfig(
+        hooks=Hooks(before_tool=[require_approval_unless_read_only(mcp)]),
+        approver=approve,
+    ))
+    await agent.run("Summarise the onboarding docs and file a Linear issue for anything out of date")
+# every server disconnected (subprocesses terminated) here
+```
+
+- MCP tools are ordinary agent-kit tools named `server__tool`: `allowed_tools`, hooks, approvals, budgets, audit, and Cloud reporting all apply.
+- Structured results come back as data; text, images, and resources are summarised; tool errors and timeouts (`call_timeout_s`) reach the model as tool errors.
+- `require_approval_unless_read_only(mcp)` asks before any MCP tool not marked `readOnlyHint` — a server can't skip the gate by omitting hints.
+- A `required` server that fails to connect closes the others and raises `MCPConnectionError`; `required=False` skips it.
+
+Full example: [`examples/mcp_tools.py`](examples/mcp_tools.py).
 
 ---
 

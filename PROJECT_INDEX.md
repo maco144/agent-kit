@@ -29,7 +29,8 @@ agent-kit/
 │   │   └── base.py         # BaseProvider + ProviderConfig
 │   ├── tools/              # Tool system
 │   │   ├── base.py         # Tool class + @tool decorator
-│   │   └── registry.py     # ToolRegistry (allowlist enforcement)
+│   │   ├── registry.py     # ToolRegistry (allowlist enforcement)
+│   │   └── mcp.py          # MCPToolset (MCP servers over stdio / streamable HTTP)
 │   ├── orchestrator/       # Multi-agent coordination
 │   │   ├── pipeline.py     # LinearPipeline (sequential)
 │   │   └── dag.py          # DAGOrchestrator (parallel DAG)
@@ -77,10 +78,10 @@ agent-kit/
 │   ├── migrations/         # Alembic versions 001–007
 │   ├── tests/              # 10 server test files + OTLP helpers
 │   └── pyproject.toml      # agentkit-cloud-server v0.1.0
-├── tests/                  # SDK tests (17 test files + conftest)
-├── examples/               # 9 example scripts + README
+├── tests/                  # SDK tests (18 test files + conftest, MCP fixture server)
+├── examples/               # 10 example scripts + README
 ├── docs/                   # 4 cloud documentation files
-├── specs/                  # 12 spec files (00–11)
+├── specs/                  # 13 spec files (00–12)
 └── pyproject.toml          # SDK build config + deps
 ```
 
@@ -241,6 +242,7 @@ Managed by Alembic (`server/migrations/versions/`):
 | `specs/03-alerting.md` | Alerting rules, channels, evaluator (spec implemented) |
 | `specs/04-sla-support.md` | SLA-backed support context API (spec implemented) |
 | `specs/05-dashboard-ui.md` | Dashboard UI design spec |
+| `specs/12-mcp-client.md` | MCP client: MCPToolset over stdio / streamable HTTP (implemented) |
 | `specs/11-hooks-approval-gates.md` | before_tool / after_tool / before_llm hooks with approvals (implemented) |
 | `specs/10-compliance-exports.md` | Signed evidence bundles, retention, legal holds, deletion receipts (implemented) |
 | `specs/09-cost-circuit-breaker.md` | Per-run caps + fleet budgets with enforcement and alerts (implemented) |
@@ -267,6 +269,7 @@ Managed by Alembic (`server/migrations/versions/`):
 | `test_memory_window.py` | Tool-safe memory trimming, SQLite tool_calls persistence + migration |
 | `test_budgets.py` | Per-run caps, BudgetGuard caching / local spend / fail-open, fleet enforcement |
 | `test_compliance.py` | Offline bundle verification (tampering, wrong keys, receipts) and CLI exit codes |
+| `test_mcp.py` | MCPToolset against a real fixture MCP server over stdio and streamable HTTP |
 | `test_hooks.py` | Hook decisions, approvals (grant/deny/timeout/error), output replacement, stop_run, audit events |
 | `test_integrations_recorder.py` | RunRecorder lifecycle, deferred run_start, cost reconciliation, chain integrity |
 | `test_integrations_claude.py` | Claude Agent SDK adapter (fakes + real SDK types) |

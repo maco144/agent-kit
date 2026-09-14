@@ -17,6 +17,7 @@ python examples/hello_agent.py
 | [`safe_agent.py`](safe_agent.py) | 111 | The production posture: tool allowlisting, the tamper-evident Merkle audit chain, chain verification, and JSONL export for compliance. | API key |
 | [`claude_agent_sdk_monitored.py`](claude_agent_sdk_monitored.py) | 31 | A Claude Agent SDK run reported to agent-kit Cloud through hooks and the message stream. | `pip install agent-kit[claude-agent-sdk]`; Claude Code auth; `AGENTKIT_API_KEY` |
 | [`openai_agents_monitored.py`](openai_agents_monitored.py) | 33 | An OpenAI Agents SDK run reported to agent-kit Cloud through a trace processor. | `pip install agent-kit[openai-agents]`; `OPENAI_API_KEY`; `AGENTKIT_API_KEY` |
+| [`mcp_tools.py`](mcp_tools.py) | 39 | The official filesystem MCP server's tools inside an agent, with approval required for anything not marked read-only. | API key; Node.js; `pip install agent-kit[mcp]` |
 | [`approval_gate.py`](approval_gate.py) | 72 | Hooks and approval gates — a terminal approver for refunds, card numbers redacted from tool output, and account closure stopping the run. | API key |
 | [`cloud_monitored.py`](cloud_monitored.py) | 148 | Full fleet observability — `CloudReporter` shipping lifecycle events to agent-kit Cloud, plus circuit breaker config and per-run cost attribution. Runs locally with cloud reporting off when `AGENTKIT_API_KEY` is unset. | API key; cloud optional |
 
