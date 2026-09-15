@@ -3,7 +3,7 @@
 **Production-ready framework for building AI agents. Type-safe. Observable. Circuit-broken.**
 
 ```bash
-pip install agent-kit
+pip install agent-kit-ai
 ```
 
 ---
@@ -281,7 +281,7 @@ from agent_kit.providers import AnthropicProvider
 provider = AnthropicProvider()
 provider = AnthropicProvider(api_key="sk-ant-...", default_model="claude-3-haiku-20240307")
 
-# OpenAI (requires pip install agent-kit[openai])
+# OpenAI (requires pip install agent-kit-ai[openai])
 from agent_kit.providers.openai import OpenAIProvider
 provider = OpenAIProvider()
 
@@ -307,7 +307,7 @@ tracer = AgentTracer()
 # Structured JSON to stderr — no extra deps
 tracer = AgentTracer(backend="console")
 
-# Full OpenTelemetry (requires pip install agent-kit[otel])
+# Full OpenTelemetry (requires pip install agent-kit-ai[otel])
 tracer = AgentTracer(backend="otlp", service_name="my-agent", endpoint="http://localhost:4317")
 
 agent = Agent(provider, config=AgentConfig(tracer=tracer))
@@ -621,7 +621,7 @@ with a `name` and an `async scan(spans) -> list[Finding]` method is a scanner. F
 
 ## MCP tools
 
-Use tools from any [Model Context Protocol](https://modelcontextprotocol.io) server — `pip install agent-kit[mcp]`:
+Use tools from any [Model Context Protocol](https://modelcontextprotocol.io) server — `pip install agent-kit-ai[mcp]`:
 
 ```python
 from agent_kit.tools.mcp import MCPToolset, http, require_approval_unless_read_only, stdio
@@ -651,16 +651,16 @@ Full example: [`examples/mcp_tools.py`](examples/mcp_tools.py).
 
 ```bash
 # Core (Anthropic only)
-pip install agent-kit
+pip install agent-kit-ai
 
 # With OpenAI support
-pip install agent-kit[openai]
+pip install agent-kit-ai[openai]
 
 # With OpenTelemetry
-pip install agent-kit[otel]
+pip install agent-kit-ai[otel]
 
 # Everything
-pip install agent-kit[all]
+pip install agent-kit-ai[all]
 ```
 
 ---
@@ -740,7 +740,7 @@ subagents, handoffs, guardrails, cost — to the same audit trail, fleet dashboa
 audit chain is built on your machine, and nothing changes on the server:
 
 ```python
-# Claude Agent SDK — pip install agent-kit[claude-agent-sdk]
+# Claude Agent SDK — pip install agent-kit-ai[claude-agent-sdk]
 from agent_kit.integrations.claude_agent_sdk import ClaudeAgentObserver
 
 observer = ClaudeAgentObserver(CloudReporter(project="support"))
@@ -748,7 +748,7 @@ options = observer.with_hooks(ClaudeAgentOptions(allowed_tools=["Read", "Grep"])
 async for message in observer.observe(query(prompt=prompt, options=options), prompt=prompt):
     ...  # messages arrive unchanged
 
-# OpenAI Agents SDK — pip install agent-kit[openai-agents]
+# OpenAI Agents SDK — pip install agent-kit-ai[openai-agents]
 from agent_kit.integrations.openai_agents import AgentKitTraceProcessor
 
 add_trace_processor(AgentKitTraceProcessor(CloudReporter(project="support")))

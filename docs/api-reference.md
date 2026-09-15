@@ -693,7 +693,7 @@ A signed evidence bundle (`application/zip`) of audit runs started in `[from, to
 | `verification.json` | Each chain re-verified at export time |
 | `deletions.jsonl` | Signed deletion receipts for runs purged in the period |
 
-`400` if `from >= to` or the scope holds more than 10,000 runs (narrow the range). Verify with `agent-kit verify` (`pip install agent-kit[compliance]`).
+`400` if `from >= to` or the scope holds more than 10,000 runs (narrow the range). Verify with `agent-kit verify` (`pip install agent-kit-ai[compliance]`).
 
 ### GET /v1/compliance/retention · PUT /v1/compliance/retention
 

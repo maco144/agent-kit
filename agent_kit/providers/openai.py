@@ -20,7 +20,7 @@ try:
 except ImportError as e:
     raise ImportError(
         "The 'openai' package is required for OpenAIProvider. "
-        "Install it with: pip install agent-kit[openai]"
+        "Install it with: pip install agent-kit-ai[openai]"
     ) from e
 
 _COST_TABLE: dict[str, tuple[float, float]] = {

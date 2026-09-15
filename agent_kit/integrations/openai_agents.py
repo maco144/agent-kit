@@ -27,7 +27,7 @@ try:
 except ImportError as e:
     raise ImportError(
         "AgentKitTraceProcessor requires the 'openai-agents' package. "
-        "Install it with: pip install agent-kit[openai-agents]"
+        "Install it with: pip install agent-kit-ai[openai-agents]"
     ) from e
 
 from agent_kit.exceptions import BudgetExceededError

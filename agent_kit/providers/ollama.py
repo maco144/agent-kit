@@ -13,7 +13,7 @@ try:
 except ImportError as e:
     raise ImportError(
         "OllamaProvider requires the 'openai' package. "
-        "Install it with: pip install agent-kit[openai]"
+        "Install it with: pip install agent-kit-ai[openai]"
     ) from e
 
 _DEFAULT_BASE_URL = "http://localhost:11434/v1"

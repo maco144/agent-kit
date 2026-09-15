@@ -4,7 +4,7 @@ AgentTracer — structured observability with zero mandatory dependencies.
 Three backends:
 - "noop"    (default) — all calls are no-ops; zero overhead
 - "console" — structured JSON to stdout; zero extra deps
-- "otlp"    — full OpenTelemetry; requires agent-kit[otel]
+- "otlp"    — full OpenTelemetry; requires agent-kit-ai[otel]
 """
 
 from __future__ import annotations
@@ -138,7 +138,7 @@ class AgentTracer:
         except ImportError as e:
             raise ImportError(
                 "OTLP backend requires opentelemetry packages. "
-                "Install with: pip install agent-kit[otel]"
+                "Install with: pip install agent-kit-ai[otel]"
             ) from e
 
     @property

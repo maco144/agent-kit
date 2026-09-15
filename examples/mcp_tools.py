@@ -2,7 +2,7 @@
 Tools from an MCP server, with approval required for anything not marked read-only.
 
 Uses the official filesystem MCP server (needs Node.js). Requires:
-pip install agent-kit[mcp] and ANTHROPIC_API_KEY.
+pip install agent-kit-ai[mcp] and ANTHROPIC_API_KEY.
 """
 
 import asyncio

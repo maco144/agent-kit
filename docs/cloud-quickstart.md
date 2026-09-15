@@ -4,7 +4,7 @@ Get your first agent reporting to the cloud in under 5 minutes.
 
 ## Prerequisites
 
-- `pip install agent-kit` (v0.2.0+)
+- `pip install agent-kit-ai` (v0.4.0+)
 - An agent-kit Cloud API key (`akt_live_...`)
 
 ---
@@ -138,7 +138,7 @@ curl -o evidence.zip -H "Authorization: Bearer $AGENTKIT_API_KEY" \
   "https://ingest.agentkit.io/v1/compliance/export?from=2026-09-01T00:00:00&to=2026-10-01T00:00:00"
 
 # Anyone can verify it offline against agent-kit's published keys
-pip install "agent-kit[compliance]"
+pip install "agent-kit-ai[compliance]"
 agent-kit verify evidence.zip --keys-url https://ingest.agentkit.io/.well-known/agentkit-signing-keys
 ```
 
@@ -200,7 +200,7 @@ Already running the Claude Agent SDK or the OpenAI Agents SDK? Report those runs
 switching:
 
 ```python
-# Claude Agent SDK — pip install agent-kit[claude-agent-sdk]
+# Claude Agent SDK — pip install agent-kit-ai[claude-agent-sdk]
 from agent_kit.integrations.claude_agent_sdk import ClaudeAgentObserver
 
 observer = ClaudeAgentObserver(CloudReporter(project="support"))
@@ -208,7 +208,7 @@ options = observer.with_hooks(ClaudeAgentOptions(allowed_tools=["Read", "Grep"])
 async for message in observer.observe(query(prompt=prompt, options=options), prompt=prompt):
     ...  # messages arrive unchanged
 
-# OpenAI Agents SDK — pip install agent-kit[openai-agents]
+# OpenAI Agents SDK — pip install agent-kit-ai[openai-agents]
 from agent_kit.integrations.openai_agents import AgentKitTraceProcessor
 
 add_trace_processor(AgentKitTraceProcessor(CloudReporter(project="support")))

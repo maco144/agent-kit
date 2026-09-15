@@ -19,7 +19,7 @@ from agent_kit.hooks import SUSPEND
 from agent_kit.tools.base import Tool, tool
 from agent_kit.types import AgentResult, ClearToolResults, Compaction, Message, ToolResult, Turn
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "__version__",

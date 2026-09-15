@@ -6,7 +6,7 @@ Verify agent-kit evidence bundles offline.
     report = verify_bundle("agentkit-evidence-2026-09-01-2026-10-01.zip", keys)
 
 Checks the manifest signature, every file's SHA-256, every run's hash chain, and every
-deletion receipt's signature. Requires ``pip install agent-kit[compliance]``.
+deletion receipt's signature. Requires ``pip install agent-kit-ai[compliance]``.
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ def verify_bundle(path: str | Path, public_keys: dict[str, bytes]) -> BundleRepo
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
     except ImportError as exc:
         raise ImportError(
-            "Verifying evidence bundles requires 'cryptography'. Install it with: pip install agent-kit[compliance]"
+            "Verifying evidence bundles requires 'cryptography'. Install it with: pip install agent-kit-ai[compliance]"
         ) from exc
 
     report = BundleReport()

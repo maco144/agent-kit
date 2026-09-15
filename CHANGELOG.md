@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-15
+
+First release on PyPI, as **`agent-kit-ai`** (`pip install agent-kit-ai`; the import name stays `agent_kit`, the CLI stays `agent-kit`). The name `agent-kit` is unavailable on PyPI.
+
 ### Added
 - **Tool output scanning.** `Hooks(after_tool=[scan_tool_output(PatternScanner(), NullconeScanner())])` screens every tool result — web pages, MCP results, child-agent answers — before the model reads it. `PatternScanner` catches hidden Unicode tag text, chat-template control tokens, instruction overrides, bidi and zero-width tricks, encoded payloads, markdown data exfiltration, and jailbreak persona switches; `NullconeScanner` looks up URLs, domains, IPs, and hashes found in the output against the Nullcone threat database (opt-in, cached, fail-open, confidence-filtered, pauses on HTTP 429). The most severe finding decides: stop the run (`stop_run_at`), block the output (`block_at`, default high), wrap it in an `agentkit_scan` untrusted-content envelope (`warn_at`, default medium), or allow and record. Hook decisions carry `findings`; the loop records them as `tool_output_flagged` audit events and Cloud events (rule metadata only, never output), and agent-kit Cloud gains a `tool_output_flagged` alert rule with `min_severity`. A lead agent's scanner covers its delegated children, and a hook shared by lead and child runs once. Example `examples/scanned_tools.py`. See `specs/17-tool-output-scanning.md`.
 - **Agents as tools.** `agent.as_tool(name, description, output_type=None)` lets another agent delegate to it. Every call is a fresh child run (own memory and audit chain) that keeps the child's provider, tools, and hooks and inherits the calling run's hooks (run after the child's, so delegation can't bypass a `deny_tools`), approver, run store, and remaining `max_run_cost_usd`. A child suspended on an approval suspends the parent; its approvals appear in `pending_approvals` as `"<call>/<child call>"` and `parent.resume(run_id, approvals=...)` routes them down. Child spend counts toward the parent cap and `total_cost_usd`; the parent's `tool_call` audit event records `delegated_run_id` and `delegated_root_hash`; child runs report to Cloud with `parent_run_id` on `run_start`. Crashed delegations resume the child from its checkpoint. `AgentConfig(max_delegation_depth=5)`. `ToolResult` gains `cost_usd` / `tokens`; `PendingApproval` gains `run_id`. With `cloud` set, a caller-supplied `run_id` longer than 36 characters raises `ValueError`. Example `examples/delegation.py`. See `specs/16-agent-as-tool.md`.
@@ -25,6 +29,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 - Minimum versions: `anthropic>=1.0`, `openai>=1.40` (structured output parameters).
 
 ### Fixed
+- The `ollama` extra installed nothing, but `OllamaProvider` needs the `openai` package; `agent-kit-ai[ollama]` now installs `openai>=1.40`.
 - `AgentResult.total_cost_usd` / `total_tokens` included every earlier run on the same `Agent`; they now cover only the run's own turns.
 - Anthropic thinking blocks were dropped from conversation history, which breaks tool-using turns on models that think (Claude Opus 5 and Sonnet 5 do by default); assistant turns now round-trip every content block verbatim.
 - The 50-message memory window rewrote the start of the history on every turn once exceeded, so prompt caching missed from then on (and replayed thinking blocks fail the Claude Fable 5.1 conversation check).

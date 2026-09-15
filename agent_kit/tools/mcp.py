@@ -12,7 +12,7 @@ Use tools from Model Context Protocol servers.
 
 MCP tools are ordinary agent-kit Tools: allowed_tools, hooks and approvals, budgets, audit,
 and Cloud reporting all apply. Connections live exactly as long as the ``async with`` block.
-Requires ``pip install agent-kit[mcp]``.
+Requires ``pip install agent-kit-ai[mcp]``.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ try:
     from mcp.types import REQUEST_TIMEOUT, CallToolResult, PaginatedRequestParams, ToolAnnotations
 except ImportError as e:
     raise ImportError(
-        "MCP support requires 'mcp>=2.0'. Install it with: pip install agent-kit[mcp]"
+        "MCP support requires 'mcp>=2.0'. Install it with: pip install agent-kit-ai[mcp]"
     ) from e
 
 from agent_kit.exceptions import MCPConnectionError, MCPToolError

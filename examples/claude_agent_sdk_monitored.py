@@ -1,7 +1,7 @@
 """
 Claude Agent SDK run reported to agent-kit Cloud.
 
-Requires: pip install agent-kit[claude-agent-sdk], Claude Code authentication,
+Requires: pip install agent-kit-ai[claude-agent-sdk], Claude Code authentication,
 and AGENTKIT_API_KEY for the Cloud side.
 """
 

@@ -1,7 +1,7 @@
 """
 OpenAI Agents SDK run reported to agent-kit Cloud.
 
-Requires: pip install agent-kit[openai-agents], OPENAI_API_KEY, and AGENTKIT_API_KEY.
+Requires: pip install agent-kit-ai[openai-agents], OPENAI_API_KEY, and AGENTKIT_API_KEY.
 """
 
 import asyncio
