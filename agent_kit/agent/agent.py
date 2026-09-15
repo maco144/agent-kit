@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, AsyncIterator, TypeVar, overload
+from typing import TYPE_CHECKING, Any, AsyncIterator, Literal, TypeVar, overload
 
 from agent_kit.agent.loop import AgentLoop
 from agent_kit.audit.chain import AuditChain
@@ -14,6 +14,9 @@ from agent_kit.tools.registry import ToolRegistry
 from agent_kit.types import (
     AgentResult,
     CircuitBreakerConfig,
+    ClearToolResults,
+    Compaction,
+    RequestOptions,
     RetryPolicyConfig,
 )
 
@@ -43,7 +46,7 @@ class AgentConfig:
         circuit_breaker: CircuitBreakerConfig | None = None,
         audit_enabled: bool = True,
         tracer: AgentTracer | None = None,
-        memory_window: int = 50,
+        memory_window: int | None = None,
         cloud: CloudReporter | None = None,
         max_run_cost_usd: float | None = None,
         enforce_budgets: bool = False,
@@ -51,6 +54,13 @@ class AgentConfig:
         approver: Approver | None = None,
         approval_timeout_s: float = 300.0,
         output_retries: int = 2,
+        thinking: Literal["adaptive", "disabled"] | None = None,
+        effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None,
+        prompt_caching: bool = True,
+        compaction: Compaction | None = None,
+        clear_tool_results: ClearToolResults | None = None,
+        provider_options: dict[str, Any] | None = None,
+        context_budget_tokens: int | None = 150_000,
     ) -> None:
         self.model = model
         self.system_prompt = system_prompt
@@ -61,7 +71,7 @@ class AgentConfig:
         self.circuit_breaker = circuit_breaker or CircuitBreakerConfig()
         self.audit_enabled = audit_enabled
         self.tracer = tracer
-        self.memory_window = memory_window
+        self.memory_window = memory_window  # message cap applied on append; None = token budget only
         self.cloud = cloud
         self.max_run_cost_usd = max_run_cost_usd  # per-run hard cap, enforced before each model call
         self.enforce_budgets = enforce_budgets  # fleet budgets from agent-kit Cloud (requires cloud)
@@ -69,6 +79,13 @@ class AgentConfig:
         self.approver = approver  # awaited when a before_tool hook asks for approval
         self.approval_timeout_s = approval_timeout_s  # no answer in time → deny
         self.output_retries = output_retries  # repair turns after an invalid typed answer
+        self.thinking = thinking  # Anthropic thinking type
+        self.effort = effort  # Anthropic output_config.effort / OpenAI reasoning_effort
+        self.prompt_caching = prompt_caching  # Anthropic cache breakpoints (system + conversation)
+        self.compaction = compaction  # Anthropic server-side compaction; disables client trimming
+        self.clear_tool_results = clear_tool_results  # Anthropic server-side tool-result clearing
+        self.provider_options = provider_options or {}  # merged into every provider request
+        self.context_budget_tokens = context_budget_tokens  # over budget → cut history once to half
 
 
 class Agent:
@@ -198,6 +215,15 @@ class Agent:
             approver=self._config.approver,
             approval_timeout_s=self._config.approval_timeout_s,
             output_retries=self._config.output_retries,
+            request_options=RequestOptions(
+                thinking=self._config.thinking,
+                effort=self._config.effort,
+                prompt_caching=self._config.prompt_caching,
+                compaction=self._config.compaction,
+                clear_tool_results=self._config.clear_tool_results,
+                provider_options=dict(self._config.provider_options),
+            ),
+            context_budget_tokens=self._config.context_budget_tokens,
         )
 
     @property

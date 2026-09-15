@@ -19,7 +19,7 @@ from agent_kit import Agent, tool
 from agent_kit.output import OutputSpec
 from agent_kit.providers import anthropic as anthropic_provider
 from agent_kit.providers.anthropic import AnthropicProvider
-from agent_kit.types import Message
+from agent_kit.types import ClearToolResults, Compaction, Message, RequestOptions
 
 
 def text_block(text: str) -> NS:
@@ -502,3 +502,189 @@ def test_ollama_inherits_structured_output_support():
     assert OllamaProvider().supports_structured_output is True
     # Ollama's format grammar covers the whole reply, so the model can't also call tools
     assert OllamaProvider().structured_output_with_tools is False
+
+
+# ---------------------------------------------------------------------------
+# Context management
+# ---------------------------------------------------------------------------
+
+
+def thinking_block(signature: str = "sig-1") -> NS:
+    return NS(type="thinking", thinking="", signature=signature)
+
+
+class FakeAnthropicWithBeta(FakeAnthropic):
+    def __init__(self, responses: list[NS]) -> None:
+        super().__init__(responses)
+        self.beta_calls: list[dict[str, Any]] = []
+        self.beta = NS(messages=NS(create=self._beta_create))
+
+    async def _beta_create(self, **kwargs: Any) -> NS:
+        self.beta_calls.append(kwargs)
+        return self._responses.pop(0)
+
+
+async def test_anthropic_thinking_blocks_round_trip_verbatim():
+    agent, fake = anthropic_agent(
+        [
+            anthropic_response(
+                [thinking_block(), tool_use_block("toolu_1", "get_weather", {"city": "Paris"})], "tool_use"
+            ),
+            anthropic_response([thinking_block("sig-2"), text_block("21C")]),
+        ],
+        tools=[get_weather],
+    )
+
+    await agent.run("weather?")
+
+    assert fake.calls[1]["messages"][1] == {
+        "role": "assistant",
+        "content": [
+            {"type": "thinking", "thinking": "", "signature": "sig-1"},
+            {"type": "tool_use", "id": "toolu_1", "name": "get_weather", "input": {"city": "Paris"}},
+        ],
+    }
+    assert agent.memory.history()[-1].native_content == [
+        {"type": "thinking", "thinking": "", "signature": "sig-2"},
+        {"type": "text", "text": "21C"},
+    ]
+
+
+async def test_anthropic_agent_runs_cache_by_default():
+    provider = AnthropicProvider(api_key="test")
+    fake = FakeAnthropic([anthropic_response([text_block("hi")]), anthropic_response([text_block("hi")])])
+    provider._client = fake  # type: ignore[assignment]
+    from agent_kit import AgentConfig
+
+    await Agent(provider, config=AgentConfig(system_prompt="Be brief.")).run("hi")
+    await Agent(provider, config=AgentConfig(system_prompt="Be brief.", prompt_caching=False)).run("hi")
+
+    assert fake.calls[0]["system"] == [{"type": "text", "text": "Be brief.", "cache_control": {"type": "ephemeral"}}]
+    assert fake.calls[0]["cache_control"] == {"type": "ephemeral"}
+    assert fake.calls[1]["system"] == "Be brief."
+    assert "cache_control" not in fake.calls[1]
+
+
+async def test_anthropic_direct_call_without_options_adds_nothing():
+    provider = AnthropicProvider(api_key="test")
+    fake = FakeAnthropic([anthropic_response([text_block("hi")])])
+    provider._client = fake  # type: ignore[assignment]
+    await provider.complete(ASK, system="s")
+    assert fake.calls[0]["system"] == "s" and "cache_control" not in fake.calls[0]
+
+
+async def test_anthropic_thinking_effort_and_output_schema_share_output_config():
+    provider = AnthropicProvider(api_key="test")
+    fake = FakeAnthropic([anthropic_response([text_block("{}")])])
+    provider._client = fake  # type: ignore[assignment]
+    options = RequestOptions(
+        thinking="adaptive",
+        effort="high",
+        prompt_caching=False,
+        provider_options={"thinking": {"display": "summarized"}, "metadata": {"user_id": "u1"}},
+    )
+
+    await provider.complete(ASK, output_schema=WEATHER, options=options)
+
+    call = fake.calls[0]
+    assert provider.supports_request_options is True
+    assert call["thinking"] == {"display": "summarized", "type": "adaptive"}
+    assert call["output_config"] == {"effort": "high", "format": {"type": "json_schema", "schema": WEATHER.json_schema}}
+    assert call["metadata"] == {"user_id": "u1"}
+
+
+async def test_anthropic_context_management_uses_beta_client():
+    provider = AnthropicProvider(api_key="test")
+    response = anthropic_response([NS(type="compaction", content="summary"), text_block("ok")])
+    response.usage.iterations = [
+        NS(type="compaction", input_tokens=180_000, output_tokens=3_500),
+        NS(type="message", input_tokens=23_000, output_tokens=1_000),
+    ]
+    response.context_management = NS(
+        applied_edits=[NS(type="clear_tool_uses_20250919", cleared_tool_uses=4, cleared_input_tokens=51_000)]
+    )
+    fake = FakeAnthropicWithBeta([response])
+    provider._client = fake  # type: ignore[assignment]
+    options = RequestOptions(
+        prompt_caching=False,
+        compaction=Compaction(trigger_tokens=120_000, instructions="Keep decisions."),
+        clear_tool_results=ClearToolResults(keep=2, exclude_tools=["search"], clear_inputs=True),
+        provider_options={"betas": ["extra-beta"]},
+    )
+
+    turn = await provider.complete(ASK, model="claude-opus-5", options=options)
+
+    assert fake.calls == []
+    call = fake.beta_calls[0]
+    assert call["betas"] == ["compact-2026-01-12", "context-management-2025-06-27", "extra-beta"]
+    assert call["context_management"] == {
+        "edits": [
+            {
+                "type": "clear_tool_uses_20250919",
+                "trigger": {"type": "input_tokens", "value": 100_000},
+                "keep": {"type": "tool_uses", "value": 2},
+                "exclude_tools": ["search"],
+                "clear_tool_inputs": True,
+            },
+            {
+                "type": "compact_20260112",
+                "trigger": {"type": "input_tokens", "value": 120_000},
+                "instructions": "Keep decisions.",
+            },
+        ]
+    }
+    assert (turn.cost.input_tokens, turn.cost.output_tokens) == (203_000, 4_500)
+    assert turn.cost.cost_usd == pytest.approx((203_000 * 5 + 4_500 * 25) / 1_000_000)
+    assert turn.context_events == [
+        {"type": "compaction", "input_tokens": 180_000, "output_tokens": 3_500},
+        {"type": "clear_tool_uses_20250919", "cleared_tool_uses": 4, "cleared_input_tokens": 51_000},
+    ]
+    assert turn.message_out is not None
+    assert turn.message_out.native_content == [{"type": "compaction", "content": "summary"}, {"type": "text", "text": "ok"}]
+
+
+async def test_anthropic_stream_beta_and_native_content():
+    provider = AnthropicProvider(api_key="test")
+    calls: list[dict[str, Any]] = []
+
+    def beta_stream(**kwargs: Any) -> FakeAnthropicStream:
+        calls.append(kwargs)
+        return FakeAnthropicStream(["ok"], anthropic_response([thinking_block(), text_block("ok")]))
+
+    provider._client = NS(beta=NS(messages=NS(stream=beta_stream)))  # type: ignore[assignment]
+    items = [i async for i in provider.stream(ASK, options=RequestOptions(compaction=Compaction()))]
+
+    assert calls[0]["betas"] == ["compact-2026-01-12"]
+    assert items[-1].message_out.native_content[0] == {"type": "thinking", "thinking": "", "signature": "sig-1"}
+
+
+@requires_openai
+def test_anthropic_native_assistant_message_renders_portably_for_openai():
+    from agent_kit.providers.openai import _messages_to_openai
+
+    msg = Message(
+        role="assistant",
+        content="21C",
+        native_content=[{"type": "thinking", "thinking": "", "signature": "s"}, {"type": "text", "text": "21C"}],
+        native_provider="anthropic",
+    )
+    assert _messages_to_openai([msg]) == [{"role": "assistant", "content": "21C"}]
+
+
+@requires_openai
+async def test_openai_request_options():
+    from agent_kit.providers.openai import OpenAIProvider
+
+    provider = OpenAIProvider(api_key="test")
+    fake = FakeOpenAI([openai_response("a"), openai_response("b"), openai_response("c")])
+    provider._client = fake  # type: ignore[assignment]
+
+    await provider.complete(ASK, options=RequestOptions(effort="max", compaction=Compaction(), provider_options={"seed": 7}))
+    await provider.complete(ASK, options=RequestOptions(effort="medium", thinking="adaptive"))
+    await provider.complete(ASK)
+
+    assert provider.supports_request_options is True
+    assert (fake.calls[0]["reasoning_effort"], fake.calls[0]["seed"]) == ("high", 7)
+    assert "context_management" not in fake.calls[0] and "cache_control" not in fake.calls[0]
+    assert fake.calls[1]["reasoning_effort"] == "medium" and "thinking" not in fake.calls[1]
+    assert "reasoning_effort" not in fake.calls[2]

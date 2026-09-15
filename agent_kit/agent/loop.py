@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import math
 import time
 import uuid
 from typing import TYPE_CHECKING, Any, AsyncIterator
@@ -16,6 +18,7 @@ from agent_kit.exceptions import (
     RunStoppedByHookError,
 )
 from agent_kit.hooks import ApprovalRequest, LLMCallContext, ToolCallContext, ToolResultContext, run_hook
+from agent_kit.memory.budget import DEFAULT_TOKENS_PER_CHAR, plan_trim, prompt_chars
 from agent_kit.memory.in_memory import InMemoryStore
 from agent_kit.observability.tracer import AgentTracer
 from agent_kit.output import OutputParseError, OutputSpec
@@ -28,6 +31,7 @@ from agent_kit.types import (
     CircuitBreakerConfig,
     CostSummary,
     Message,
+    RequestOptions,
     RetryPolicyConfig,
     SpanKind,
     ToolCall,
@@ -40,6 +44,8 @@ if TYPE_CHECKING:
     from agent_kit.cloud.budgets import BudgetGuard
     from agent_kit.cloud.reporter import CloudReporter
     from agent_kit.hooks import Approver, Hooks
+
+logger = logging.getLogger(__name__)
 
 _REPAIR_PROMPT = (
     "Your response did not match the required output schema:\n{errors}\n"
@@ -83,6 +89,8 @@ class AgentLoop:
         approver: Approver | None = None,
         approval_timeout_s: float = 300.0,
         output_retries: int = 2,
+        request_options: RequestOptions | None = None,
+        context_budget_tokens: int | None = None,
     ) -> None:
         self._provider = provider
         self._registry = registry
@@ -106,6 +114,10 @@ class AgentLoop:
         self._approver = approver
         self._approval_timeout_s = approval_timeout_s
         self._output_retries = output_retries
+        self._request_options = request_options or RequestOptions()
+        self._context_budget_tokens = context_budget_tokens
+        self._last_prompt_tokens = 0  # prompt tokens the provider reported for the previous call
+        self._last_prompt_chars = 0  # characters sent in that call
         self._run_id = ""
         self._context: dict[str, Any] = {}
         self._pending_stop: RunStoppedByHookError | None = None
@@ -151,6 +163,15 @@ class AgentLoop:
         parsed: Any = None
         invalid_answers = 0
 
+        options_kwargs: dict[str, Any] = {}
+        if getattr(self._provider, "supports_request_options", False):
+            options_kwargs["options"] = self._request_options
+        elif not self._request_options.is_default():
+            logger.warning(
+                "%s does not accept request options; thinking/effort/caching/context settings are ignored",
+                self._provider.name(),
+            )
+
         if self._reporter:
             await self._reporter.on_run_start(
                 run_id=run_id,
@@ -177,9 +198,11 @@ class AgentLoop:
                 while turn_count < self._max_turns:
                     turn_count += 1
                     await self._enforce_budgets()
-                    messages = self._memory.history(include_system=False)
-                    await self._gate_llm(turn_count, len(messages))
                     tool_schemas = self._registry.schemas()
+                    self._trim_context(turn_count, system, tool_schemas)
+                    messages = self._memory.history(include_system=False)
+                    self._last_prompt_chars = prompt_chars(system, tool_schemas, messages)
+                    await self._gate_llm(turn_count, len(messages))
 
                     # --- LLM call with circuit breaker + retry ---
                     with self._tracer.span(
@@ -200,7 +223,7 @@ class AgentLoop:
                                 messages,
                                 tool_schemas or None,
                                 system,
-                                output_kwargs,
+                                {**output_kwargs, **options_kwargs},
                             )
                             chunks: list[str] = []
                             while item is not None:
@@ -230,6 +253,7 @@ class AgentLoop:
                                 system=system or None,
                                 max_tokens=self._max_tokens_per_turn,
                                 **output_kwargs,
+                                **options_kwargs,
                             )
                         llm_span.set_attribute("input_tokens", turn.cost.input_tokens)
                         llm_span.set_attribute("output_tokens", turn.cost.output_tokens)
@@ -247,6 +271,11 @@ class AgentLoop:
                                 "has_tool_calls": len(turn.tool_calls) > 0,
                             },
                         )
+
+                    self._last_prompt_tokens = (
+                        turn.cost.input_tokens + turn.cost.cache_read_tokens + turn.cost.cache_write_tokens
+                    )
+                    self._audit_context_events(turn_count, turn)
 
                     # Track cost
                     self._tracer.record_cost(
@@ -384,6 +413,51 @@ class AgentLoop:
                 )
 
         self.result = result
+
+    def _trim_context(self, turn: int, system: str, tools: list[ToolSchema]) -> None:
+        """Cut history once to half the token budget when the next request would exceed it."""
+        budget = self._context_budget_tokens
+        if budget is None or self._request_options.compaction is not None:
+            return
+        messages = self._memory.history(include_system=False)
+        ratio = (
+            self._last_prompt_tokens / self._last_prompt_chars
+            if self._last_prompt_tokens and self._last_prompt_chars
+            else DEFAULT_TOKENS_PER_CHAR
+        )
+        drop, before, _ = plan_trim(messages, prompt_chars(system, tools, messages), budget, ratio)
+        if drop == 0:
+            return
+        removed = self._memory.trim_oldest(drop)
+        after = math.ceil(prompt_chars(system, tools, self._memory.history(include_system=False)) * ratio)
+        self._audit_event(
+            "context_trimmed",
+            "agent",
+            {
+                "turn": turn,
+                "removed_messages": removed,
+                "estimated_tokens_before": before,
+                "estimated_tokens_after": after,
+                "budget_tokens": budget,
+            },
+        )
+
+    def _audit_context_events(self, turn_number: int, turn: Turn) -> None:
+        """Record server-side compaction and context edits reported by the provider."""
+        for event in turn.context_events:
+            if event.get("type") == "compaction":
+                payload: dict[str, Any] = {
+                    "turn": turn_number,
+                    "input_tokens": event.get("input_tokens", 0),
+                    "output_tokens": event.get("output_tokens", 0),
+                }
+                self._audit_event("context_compacted", self._provider.name(), payload)
+            else:
+                payload = {"turn": turn_number, "edit": event.get("type")}
+                for key in ("cleared_tool_uses", "cleared_thinking_turns", "cleared_input_tokens"):
+                    if key in event:
+                        payload[key] = event[key]
+                self._audit_event("context_edited", self._provider.name(), payload)
 
     async def _enforce_budgets(self) -> None:
         """Stop before a model call when the run cap or a fleet budget is exhausted."""
