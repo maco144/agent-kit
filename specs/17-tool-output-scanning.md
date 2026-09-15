@@ -202,9 +202,13 @@ description. Benign text that must not match: ordinary prose (including membersh
 the reader "is now" or "you are now" something ordinary), source code, JSON API docs, a base64-encoded PNG, a
 markdown link with a short query string (`?page=2`).
 
-Test fixtures containing positive payloads are assembled at runtime from fragments, so repository files do not
-themselves carry working injection strings (and developer tooling that scans written files for them does not
-block the test suite).
+**No literal injection payloads in the repository.** A literal payload in a source file is a live payload for every
+agent that reads the repo — including the agents building agent-kit. All positive payloads live in one module,
+`tests/injection_fixtures.py`, as named constants (`UNICODE_TAG_INSTRUCTION`, `CHATML_ROLE_TOKEN`,
+`INSTRUCTION_OVERRIDE`, `ENCODED_OVERRIDE`, `EXFIL_MARKDOWN_IMAGE`, `PERSONA_SWITCH`, …) that the module assembles
+from fragments at import time; tests import the names and never spell payloads inline. `examples/` and the README
+follow the same rule (the example builds its injected page with a helper, and docs describe payloads rather than
+quote them). Developer tooling that screens written files is never allowlisted for test paths.
 
 ### `NullconeScanner`
 
@@ -215,15 +219,23 @@ block the test suite).
 - **Never looked up:** RFC 2606 / 6761 names (`example.com`, `example.net`, `example.org`, and any name under
   `.example`, `.test`, `.invalid`, `.localhost`, `.local`), `localhost`, private/loopback/link-local/reserved IPs
   (`ipaddress` module), and anything in `ignore` (exact value or domain suffix).
-- **Lookup:** `GET {base_url}/v1/ioc?value=<quoted>`, concurrency 5, whole scan bounded by `timeout_s`. A body
-  with `"found": false` or HTTP 404 is a miss. Results (hits and misses) are cached per value for `cache_ttl_s`,
-  LRU-bounded by `cache_size`.
+- **Lookup:** `GET {base_url}/v1/ioc?value=<quoted>` — one request per indicator (Nullcone's `search_by_type` is
+  not used), concurrency 5, whole scan bounded by `timeout_s`. A body with `"found": false` or HTTP 404 is a miss.
+  Results (hits and misses) are cached per value for `cache_ttl_s`, LRU-bounded by `cache_size`.
+- **Rate limit:** `/v1/ioc` allows 200 requests per minute per IP, and a delegation tree scanning indicator-heavy
+  output can exceed it. `max_indicators` and the cache bound the request rate. After an HTTP 429 the scanner sends
+  no lookups for `Retry-After` seconds (60 if the header is absent or invalid); cached values still resolve
+  during the pause and everything else is treated as a lookup error.
+- **Confidence comes from the API.** Filtering reads `confidence_score` / `confidence_tier` from each response; no
+  source or domain is hardcoded as trusted or noisy, so rescoring on Nullcone's side takes effect without an
+  agent-kit release.
 - **A hit becomes a finding** unless `is_likely_fp` is true, `confidence_score < min_confidence_score`, or
   `confidence_tier == "unverified"` and not `include_unverified`. Rule `ioc_<ioc_type>` (e.g. `ioc_domain`),
   `indicator` = the looked-up value, `message` = `"known malicious indicator: <family_name>"`, severity from
   Nullcone's 0–10: `>= 8` critical, `>= 6` high, `>= 4` medium, else low. Location = path of the first span the
   indicator appeared in.
-- **Errors** (timeout, connection error, HTTP 5xx, invalid JSON): with `fail_closed=False` the lookups that failed
+- **Errors** (timeout, connection error, HTTP 429 or 5xx, invalid JSON, lookups skipped during a rate-limit pause):
+  with `fail_closed=False` the lookups that failed
   produce no findings and one warning is logged per scanner instance per 60 s; with `fail_closed=True`,
   `scan()` raises `ScannerUnavailableError`, which the hook runner turns into a deny.
 
@@ -309,12 +321,15 @@ Server:
 `tests/test_scanning.py`:
 
 - `collect_spans`: paths for nested dicts/lists, keys as spans, `$error`, envelope skip, `max_chars` truncation.
-- `PatternScanner`: one positive case per rule (fixtures assembled from fragments); the benign corpus above
+- `PatternScanner`: one positive case per rule using `tests/injection_fixtures.py`; the benign corpus above
   yields no findings; `disable` and `extra_rules`.
 - `NullconeScanner` over `httpx.MockTransport`: severity mapping; `is_likely_fp`, confidence score, and
   unverified filtering; reserved names and private IPs never requested; query/fragment stripped; one request per
-  value across two scans (cache); `max_indicators`; timeout and 5xx fail open with no findings; `fail_closed`
-  raises `ScannerUnavailableError`.
+  value across two scans (cache); `max_indicators`; timeout, 5xx, and 429 fail open with no findings; after a
+  429 no requests are sent until `Retry-After` elapses (cached values still resolve); `fail_closed` raises
+  `ScannerUnavailableError`.
+- Repository hygiene: no file under `agent_kit/`, `tests/` (other than `injection_fixtures.py`), `examples/`,
+  `docs/`, or `README.md` contains any fixture payload value (a test that imports the fixtures and greps the tree).
 - `scan_tool_output`: every row of the decision table; `trusted_tools`; threshold validation; raising scanner →
   deny through the agent loop.
 - Loop: `tool_output_flagged` payload (and that no tool output text appears in it); reporter event; wrapped
@@ -342,5 +357,8 @@ community-tier indicator (finding) and `example.com` (no request).
 - Scanning MCP tool descriptions (tool poisoning), user prompts, or model output.
 - Runs recorded through the Claude Agent SDK / OpenAI Agents SDK adapters.
 - A dashboard view of findings.
-- Nullcone data and guard fixes (`search_by_type` type filter; `example.com` listed as malicious; the guard's
-  broad "you are now" pattern) — Nullcone repo.
+- Nullcone data and guard fixes (`search_by_type` type filter; the noisy urlscan feed that lists common domains at
+  unverified confidence; the guard's broad "you are now" pattern) — Nullcone is fixing these; nothing here waits
+  on them.
+- A third scanner over the Nullcone SDK's `PromptCache` (prompt IOCs matched locally after one fetch) — a
+  follow-up once its production data is populated; the `Scanner` protocol already accommodates it.
