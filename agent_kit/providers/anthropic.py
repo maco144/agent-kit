@@ -46,7 +46,7 @@ _COST_TABLE: dict[str, tuple[float, float]] = {
 _CACHE_READ_MULTIPLIER: dict[str, float] = {"claude-fable-5-1": 0.025}
 _CACHE_WRITE_MULTIPLIER = 1.25
 
-_DEFAULT_MODEL = "claude-sonnet-4-6"
+_DEFAULT_MODEL = "claude-opus-5"
 
 _COMPACTION_BETA = "compact-2026-01-12"
 _CONTEXT_EDITING_BETA = "context-management-2025-06-27"
@@ -290,7 +290,7 @@ class AnthropicProvider:
 
         provider = AnthropicProvider()                        # uses ANTHROPIC_API_KEY env var
         provider = AnthropicProvider(api_key="sk-ant-...")   # explicit key
-        provider = AnthropicProvider(default_model="claude-3-haiku-20240307")
+        provider = AnthropicProvider(default_model="claude-sonnet-5")
     """
 
     supports_structured_output = True

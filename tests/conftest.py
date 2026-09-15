@@ -64,6 +64,12 @@ class MockProvider:
             yield word + " "
 
 
+@pytest.fixture(autouse=True)
+def _agentkit_base_url(monkeypatch):
+    """CloudReporter has no default server; tests that build one point it at a placeholder."""
+    monkeypatch.setenv("AGENTKIT_BASE_URL", "http://agentkit.test")
+
+
 @pytest.fixture
 def mock_provider():
     return MockProvider()

@@ -22,7 +22,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_kit.cloud")
 
-_DEFAULT_BASE_URL = "https://ingest.agentkit.io"
 _INGEST_PATH = "/v1/events"
 _MAX_BATCH = 200
 
@@ -39,7 +38,8 @@ class CloudReporter:
         from agent_kit.cloud import CloudReporter
 
         reporter = CloudReporter(
-            api_key="akt_live_...",     # or set AGENTKIT_API_KEY
+            api_key="akt_live_...",                    # or set AGENTKIT_API_KEY
+            base_url="https://agentkit.example.com",   # your agent-kit Cloud server, or set AGENTKIT_BASE_URL
             project="production",
             agent_name="billing-assistant",
         )
@@ -55,7 +55,7 @@ class CloudReporter:
         api_key: str | None = None,
         project: str = "default",
         agent_name: str | None = None,
-        base_url: str = _DEFAULT_BASE_URL,
+        base_url: str | None = None,
         flush_interval_s: float = 5.0,
         max_queue_size: int = 1000,
         include_output: bool = False,
@@ -65,10 +65,16 @@ class CloudReporter:
             raise ValueError(
                 "api_key is required. Pass it explicitly or set AGENTKIT_API_KEY."
             )
+        resolved_url = base_url or os.environ.get("AGENTKIT_BASE_URL", "")
+        if not resolved_url:
+            raise ValueError(
+                "base_url is required: there is no hosted agent-kit Cloud endpoint yet. Pass the URL of your "
+                "agent-kit Cloud server (see docs/self-hosting.md) or set AGENTKIT_BASE_URL."
+            )
         self._api_key = resolved_key
         self._project = project
         self._agent_name = agent_name or ""
-        self._base_url = base_url.rstrip("/")
+        self._base_url = resolved_url.rstrip("/")
         self._flush_interval_s = flush_interval_s
         self._max_queue_size = max_queue_size
         self._include_output = include_output

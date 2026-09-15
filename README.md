@@ -30,7 +30,7 @@ agent = Agent(AnthropicProvider(), tools=[lookup_order, issue_refund, research_a
         approver=SUSPEND,                                      # approvals can wait for days...
         run_store=SQLiteRunStore("runs.db"),                   # ...and runs survive crashes and deploys
         max_run_cost_usd=0.50,                                 # hard cap, sub-agents included
-        cloud=CloudReporter(project="support", agent_name="refunds"),  # fleet metrics, alerts, hosted audit
+        cloud=CloudReporter(project="support", agent_name="refunds"),  # fleet metrics, alerts, audit trail (AGENTKIT_BASE_URL)
     ),
 )
 ```
@@ -330,7 +330,7 @@ from agent_kit.providers import AnthropicProvider
 
 # Anthropic (default — uses ANTHROPIC_API_KEY env var)
 provider = AnthropicProvider()
-provider = AnthropicProvider(api_key="sk-ant-...", default_model="claude-3-haiku-20240307")
+provider = AnthropicProvider(api_key="sk-ant-...", default_model="claude-sonnet-5")
 
 # OpenAI (requires pip install agent-kit-ai[openai])
 from agent_kit.providers.openai import OpenAIProvider
@@ -718,13 +718,14 @@ pip install agent-kit-ai[all]
 
 ## agent-kit Cloud
 
-Connect any agent to the **agent-kit Cloud** backend — a hosted service that gives you a fleet dashboard, audit trail storage, alerting, and SLA-backed support without running any infrastructure yourself.
+Connect any agent to the **agent-kit Cloud** backend — fleet metrics, audit trail storage, alerting, budgets, and SLA context. There is no hosted service yet: run the server yourself ([self-hosting guide](docs/self-hosting.md)) and point the SDK at it.
 
 ```python
 from agent_kit.cloud import CloudReporter
 
 reporter = CloudReporter(
-    api_key="akt_live_...",      # or set AGENTKIT_API_KEY env var
+    api_key="akt_live_...",                          # or set AGENTKIT_API_KEY
+    base_url="https://agentkit.internal.acme.com",   # your server, or set AGENTKIT_BASE_URL
     project="production",
     agent_name="billing-assistant",
 )

@@ -30,7 +30,7 @@ python examples/hello_agent.py
 
 - **`ANTHROPIC_API_KEY`** is read from the environment by `AnthropicProvider()` — no example takes a key as an argument. To run against OpenAI or a local Ollama model instead, swap the provider; see the Providers section of the [README](../README.md#providers).
 - **These make real API calls and cost real money.** `hello_agent.py` is a fraction of a cent; `research_dag.py` runs four agents.
-- **`cloud_monitored.py` runs without a backend.** Set `AGENTKIT_API_KEY` to ship events to agent-kit Cloud (`https://ingest.agentkit.io` by default; pass `base_url=` to `CloudReporter` for a self-hosted server) — see [`docs/cloud-quickstart.md`](../docs/cloud-quickstart.md).
+- **`cloud_monitored.py` runs without a backend.** Set `AGENTKIT_BASE_URL` (your agent-kit Cloud server — there is no hosted endpoint yet) and `AGENTKIT_API_KEY` to ship events to it — see [`docs/cloud-quickstart.md`](../docs/cloud-quickstart.md).
 - Three of these are reproduced with their real console output in the [README demos](../README.md#demos).
 
 CI byte-compiles every file in this directory, so an example that stops importing fails the build.

@@ -51,7 +51,7 @@ Common issues, their root causes, and how to resolve them.
 1. **Identify the broken link:**
    ```bash
    curl -H "Authorization: Bearer $AGENTKIT_API_KEY" \
-     https://ingest.agentkit.io/v1/audit/runs/{run_id}/verify
+     $AGENTKIT_BASE_URL/v1/audit/runs/{run_id}/verify
    ```
    The response includes `broken_at_seq` — the sequence number of the first invalid event.
 
@@ -83,14 +83,14 @@ Common issues, their root causes, and how to resolve them.
 
 1. **Identify the source.** Use the cost endpoint to drill down:
    ```bash
-   curl "https://ingest.agentkit.io/v1/metrics/cost?group_by=agent_name&resolution=1h" \
+   curl "$AGENTKIT_BASE_URL/v1/metrics/cost?group_by=agent_name&resolution=1h" \
      -H "Authorization: Bearer $AGENTKIT_API_KEY"
    ```
    Compare series to find which agent's cost increased.
 
 2. **Check run count and turns.** A cost spike could be more runs, longer turns, or a model change:
    ```bash
-   curl "https://ingest.agentkit.io/v1/metrics/runs?agent_name=billing-agent" \
+   curl "$AGENTKIT_BASE_URL/v1/metrics/runs?agent_name=billing-agent" \
      -H "Authorization: Bearer $AGENTKIT_API_KEY"
    ```
    Look at `avg_turns` — a sudden increase suggests the agent is looping.
@@ -102,13 +102,13 @@ Common issues, their root causes, and how to resolve them.
 
 4. **Check for expensive model usage.** If a cheaper model was accidentally replaced with a more expensive one:
    ```bash
-   curl "https://ingest.agentkit.io/v1/metrics/cost?group_by=model" \
+   curl "$AGENTKIT_BASE_URL/v1/metrics/cost?group_by=model" \
      -H "Authorization: Bearer $AGENTKIT_API_KEY"
    ```
 
 5. **Set a cost anomaly alert** to catch future spikes:
    ```bash
-   curl -X POST https://ingest.agentkit.io/v1/alerts/rules \
+   curl -X POST $AGENTKIT_BASE_URL/v1/alerts/rules \
      -H "Authorization: Bearer $AGENTKIT_API_KEY" \
      -H "Content-Type: application/json" \
      -d '{
@@ -240,7 +240,7 @@ result = await dag.run("The future of AI agents")
 
 5. **Check network connectivity:**
    ```bash
-   curl -I https://ingest.agentkit.io/healthz
+   curl -I $AGENTKIT_BASE_URL/healthz
    ```
 
 6. **Self-hosted server:** Confirm `base_url` matches your server address, including any path prefix.
@@ -257,7 +257,7 @@ result = await dag.run("The future of AI agents")
 
 - **Acknowledge the alert** to suppress notifications while you wait for the window to clear:
   ```bash
-  curl -X POST https://ingest.agentkit.io/v1/alerts/firing/{id}/ack \
+  curl -X POST $AGENTKIT_BASE_URL/v1/alerts/firing/{id}/ack \
     -H "Authorization: Bearer $AGENTKIT_API_KEY" \
     -H "Content-Type: application/json" \
     -d '{"comment": "Fixed — waiting for rolling window to clear"}'
@@ -265,7 +265,7 @@ result = await dag.run("The future of AI agents")
 
 - **Mute the rule** temporarily:
   ```bash
-  curl -X PATCH https://ingest.agentkit.io/v1/alerts/rules/{rule_id} \
+  curl -X PATCH $AGENTKIT_BASE_URL/v1/alerts/rules/{rule_id} \
     -H "Authorization: Bearer $AGENTKIT_API_KEY" \
     -H "Content-Type: application/json" \
     -d '{"muted_until": "2026-03-13T09:00:00"}'

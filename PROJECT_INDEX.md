@@ -129,7 +129,7 @@ Cloud wire `EventType`: `run_start`, `turn_complete`, `run_complete`, `run_error
 - `pyproject.toml` — hatchling; extras `openai`, `ollama`, `otel`, `claude-agent-sdk`, `openai-agents`, `compliance`, `mcp`, `all`, `dev`; ruff pinned `>=0.15,<0.17` with explicit `select`; mypy strict
 - `server/pyproject.toml` — adds `opentelemetry-proto`, `cryptography`
 - `.github/workflows/ci.yml` — SDK ruff + mypy + pytest; server ruff + pytest + `alembic upgrade head`; examples byte-compile; Py 3.11 & 3.12
-- Env: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AGENTKIT_API_KEY`, `DATABASE_URL`, `ENABLE_ALERT_WORKER`, `AGENTKIT_SIGNING_KEY`, `SMTP_*`
+- Env: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AGENTKIT_API_KEY`, `AGENTKIT_BASE_URL` (required for Cloud reporting), `DATABASE_URL`, `ENABLE_ALERT_WORKER`, `AGENTKIT_SIGNING_KEY`, `SMTP_*`
 
 ## 🔗 Key Dependencies
 

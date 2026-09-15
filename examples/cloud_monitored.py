@@ -17,7 +17,8 @@ Run:
     # Without cloud (local tracing only):
     python examples/cloud_monitored.py
 
-    # With cloud dashboard:
+    # With agent-kit Cloud (your self-hosted server):
+    export AGENTKIT_BASE_URL=http://localhost:8000
     export AGENTKIT_API_KEY=akt_live_...
     python examples/cloud_monitored.py
 """
@@ -88,7 +89,7 @@ async def main():
     # Set up cloud reporting if API key is available
     cloud_key = os.environ.get("AGENTKIT_API_KEY")
     reporter = None
-    if cloud_key:
+    if cloud_key and os.environ.get("AGENTKIT_BASE_URL"):
         reporter = CloudReporter(
             api_key=cloud_key,
             project="demo",
@@ -96,7 +97,7 @@ async def main():
         )
         print("Cloud reporting: ENABLED (events → fleet dashboard)")
     else:
-        print("Cloud reporting: OFF (set AGENTKIT_API_KEY to enable)")
+        print("Cloud reporting: OFF (set AGENTKIT_BASE_URL and AGENTKIT_API_KEY to enable)")
 
     agent = Agent(
         provider=AnthropicProvider(),

@@ -279,6 +279,19 @@ def test_reporter_raises_without_api_key(monkeypatch):
         CloudReporter()
 
 
+def test_reporter_requires_a_server_url(monkeypatch):
+    monkeypatch.delenv("AGENTKIT_BASE_URL", raising=False)
+    with pytest.raises(ValueError, match="base_url is required"):
+        CloudReporter(api_key="akt_test")
+
+
+def test_reporter_base_url_from_env_or_argument(monkeypatch):
+    monkeypatch.setenv("AGENTKIT_BASE_URL", "https://agentkit.internal.acme.test/")
+    assert CloudReporter(api_key="akt_test").base_url == "https://agentkit.internal.acme.test"
+    explicit = CloudReporter(api_key="akt_test", base_url="http://localhost:8000")
+    assert explicit.base_url == "http://localhost:8000"
+
+
 def test_reporter_uses_env_var(monkeypatch):
     monkeypatch.setenv("AGENTKIT_API_KEY", "akt_live_fromenv00000000000000000000")
     reporter = CloudReporter()

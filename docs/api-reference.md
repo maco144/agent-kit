@@ -2,7 +2,7 @@
 
 All endpoints require `Authorization: Bearer <api_key>` unless noted.
 
-Base URL: `https://ingest.agentkit.io` (or your self-hosted server URL).
+Base URL: your agent-kit Cloud server (there is no hosted endpoint yet — see [self-hosting](self-hosting.md)). Examples use `$AGENTKIT_BASE_URL`.
 
 ---
 
@@ -69,7 +69,7 @@ Payload shapes by `event_type`:
 OTLP/HTTP trace export. Any OpenTelemetry-instrumented agent can report here with a standard exporter — no agent-kit SDK:
 
 ```bash
-export OTEL_EXPORTER_OTLP_ENDPOINT=https://ingest.agentkit.io
+export OTEL_EXPORTER_OTLP_ENDPOINT=$AGENTKIT_BASE_URL
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer akt_live_..."
 export OTEL_RESOURCE_ATTRIBUTES="agentkit.project=support"
 ```

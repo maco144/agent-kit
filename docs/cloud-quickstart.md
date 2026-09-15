@@ -4,14 +4,16 @@ Get your first agent reporting to the cloud in under 5 minutes.
 
 ## Prerequisites
 
-- `pip install agent-kit-ai` (v0.4.0+)
-- An agent-kit Cloud API key (`akt_live_...`)
+- `pip install agent-kit-ai` (v0.4.1+)
+- A running agent-kit Cloud server — there is no hosted service yet; see [self-hosting](self-hosting.md)
+- An API key for that server (`akt_live_...`)
 
 ---
 
-## Step 1 — Set your API key
+## Step 1 — Point the SDK at your server
 
 ```bash
+export AGENTKIT_BASE_URL=https://agentkit.internal.mycompany.com   # your server
 export AGENTKIT_API_KEY=akt_live_your_key_here
 ```
 
@@ -71,7 +73,7 @@ Create an alert channel and rule via the API:
 
 ```bash
 # Create a Slack channel
-curl -X POST https://ingest.agentkit.io/v1/alerts/channels \
+curl -X POST $AGENTKIT_BASE_URL/v1/alerts/channels \
   -H "Authorization: Bearer $AGENTKIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -81,7 +83,7 @@ curl -X POST https://ingest.agentkit.io/v1/alerts/channels \
   }'
 
 # Create a circuit-breaker-open alert rule
-curl -X POST https://ingest.agentkit.io/v1/alerts/rules \
+curl -X POST $AGENTKIT_BASE_URL/v1/alerts/rules \
   -H "Authorization: Bearer $AGENTKIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -116,7 +118,7 @@ agent = Agent(
 Create the budget once:
 
 ```bash
-curl -X POST https://ingest.agentkit.io/v1/budgets \
+curl -X POST $AGENTKIT_BASE_URL/v1/budgets \
   -H "Authorization: Bearer $AGENTKIT_API_KEY" -H "Content-Type: application/json" \
   -d '{"name": "support daily", "period": "daily", "limit_usd": 200, "agent_name": "support-bot"}'
 ```
@@ -135,11 +137,11 @@ Before every model call the agent checks both. When a ceiling is reached it rais
 ```bash
 # Export a signed evidence bundle for September
 curl -o evidence.zip -H "Authorization: Bearer $AGENTKIT_API_KEY" \
-  "https://ingest.agentkit.io/v1/compliance/export?from=2026-09-01T00:00:00&to=2026-10-01T00:00:00"
+  "$AGENTKIT_BASE_URL/v1/compliance/export?from=2026-09-01T00:00:00&to=2026-10-01T00:00:00"
 
 # Anyone can verify it offline against agent-kit's published keys
 pip install "agent-kit-ai[compliance]"
-agent-kit verify evidence.zip --keys-url https://ingest.agentkit.io/.well-known/agentkit-signing-keys
+agent-kit verify evidence.zip --keys-url $AGENTKIT_BASE_URL/.well-known/agentkit-signing-keys
 ```
 
 The bundle holds every audit chain link for the period, a re-verification report, retention policy and legal holds in force, and signed receipts for anything purged. `agent-kit verify` checks the signature, every file hash, every chain, and every receipt, and exits non-zero on any failure. It supports record-keeping obligations such as EU AI Act Article 12 and SOC 2 evidence requests; it is not a certification.
@@ -147,11 +149,11 @@ The bundle holds every audit chain link for the period, a re-verification report
 ```bash
 # Enterprise: keep audit data for 7 years
 curl -X PUT -H "Authorization: Bearer $AGENTKIT_API_KEY" -H "Content-Type: application/json" \
-  https://ingest.agentkit.io/v1/compliance/retention -d '{"audit_retention_days": 2555}'
+  $AGENTKIT_BASE_URL/v1/compliance/retention -d '{"audit_retention_days": 2555}'
 
 # Freeze a project's audit trail during an investigation
 curl -X POST -H "Authorization: Bearer $AGENTKIT_API_KEY" -H "Content-Type: application/json" \
-  https://ingest.agentkit.io/v1/compliance/holds -d '{"project": "claims", "reason": "case #4471"}'
+  $AGENTKIT_BASE_URL/v1/compliance/holds -d '{"project": "claims", "reason": "case #4471"}'
 ```
 
 ---
@@ -227,7 +229,7 @@ add_trace_processor(AgentKitTraceProcessor(CloudReporter(project="support")))
 If your framework already emits OpenTelemetry traces — in any language — point its OTLP/HTTP exporter at agent-kit. No agent-kit SDK needed:
 
 ```bash
-export OTEL_EXPORTER_OTLP_ENDPOINT=https://ingest.agentkit.io
+export OTEL_EXPORTER_OTLP_ENDPOINT=$AGENTKIT_BASE_URL
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer akt_live_..."
 export OTEL_RESOURCE_ATTRIBUTES="agentkit.project=support"
 ```

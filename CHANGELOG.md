@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-09-15
+
+### Changed
+- **`CloudReporter` requires a server URL.** Pass `base_url=` or set `AGENTKIT_BASE_URL`. There is no hosted agent-kit Cloud endpoint yet, and the previous default (`https://ingest.agentkit.io`) was on a domain agent-kit does not control — anyone who registered it could have received API keys and run metadata from SDKs that set `AGENTKIT_API_KEY` without a `base_url`.
+- `AnthropicProvider` defaults to `claude-opus-5` (was `claude-sonnet-4-6`). Pass `default_model=` to choose another model; Claude Opus 5 runs adaptive thinking by default.
+
 ## [0.4.0] — 2026-09-15
 
 First release on PyPI, as **`agent-kit-ai`** (`pip install agent-kit-ai`; the import name stays `agent_kit`, the CLI stays `agent-kit`). The name `agent-kit` is unavailable on PyPI.

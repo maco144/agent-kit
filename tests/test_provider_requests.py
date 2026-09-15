@@ -688,3 +688,7 @@ async def test_openai_request_options():
     assert "context_management" not in fake.calls[0] and "cache_control" not in fake.calls[0]
     assert fake.calls[1]["reasoning_effort"] == "medium" and "thinking" not in fake.calls[1]
     assert "reasoning_effort" not in fake.calls[2]
+
+
+def test_anthropic_provider_defaults_to_the_current_model():
+    assert AnthropicProvider(api_key="test").config.default_model == "claude-opus-5"

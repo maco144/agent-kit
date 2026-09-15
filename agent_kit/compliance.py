@@ -2,7 +2,7 @@
 Verify agent-kit evidence bundles offline.
 
     from agent_kit.compliance import load_public_keys, verify_bundle
-    keys = load_public_keys("https://ingest.agentkit.io/.well-known/agentkit-signing-keys")
+    keys = load_public_keys("https://agentkit.internal.acme.com/.well-known/agentkit-signing-keys")
     report = verify_bundle("agentkit-evidence-2026-09-01-2026-10-01.zip", keys)
 
 Checks the manifest signature, every file's SHA-256, every run's hash chain, and every
