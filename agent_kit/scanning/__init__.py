@@ -9,6 +9,7 @@ See specs/17-tool-output-scanning.md.
 """
 
 from agent_kit.scanning.base import ENVELOPE_KEY, Scanner, TextSpan, collect_spans
+from agent_kit.scanning.nullcone import NullconeScanner
 from agent_kit.scanning.patterns import BUILTIN_RULES, PatternRule, PatternScanner
 from agent_kit.scanning.policy import scan_tool_output
 from agent_kit.types import Finding, Severity
@@ -17,6 +18,7 @@ __all__ = [
     "BUILTIN_RULES",
     "ENVELOPE_KEY",
     "Finding",
+    "NullconeScanner",
     "PatternRule",
     "PatternScanner",
     "Scanner",

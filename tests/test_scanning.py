@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
+import httpx
 import injection_fixtures as fx
 import pytest
 
@@ -14,10 +17,19 @@ from agent_kit.agent.delegation import child_run_id, stack_hooks
 from agent_kit.cloud.models import CloudEvent
 from agent_kit.cloud.reporter import CloudReporter
 from agent_kit.durable import SQLiteRunStore
-from agent_kit.exceptions import RunStoppedByHookError
+from agent_kit.exceptions import RunStoppedByHookError, ScannerUnavailableError
 from agent_kit.hooks import Decision, Hooks, ToolResultContext, require_approval
 from agent_kit.providers.base import ProviderConfig
-from agent_kit.scanning import ENVELOPE_KEY, PatternRule, PatternScanner, TextSpan, collect_spans, scan_tool_output
+from agent_kit.scanning import (
+    ENVELOPE_KEY,
+    NullconeScanner,
+    PatternRule,
+    PatternScanner,
+    TextSpan,
+    collect_spans,
+    scan_tool_output,
+)
+from agent_kit.scanning.nullcone import extract_indicators
 from agent_kit.scanning.policy import NOTICE
 from agent_kit.types import CostSummary, Finding, Message, RetryPolicyConfig, ToolCall, Turn
 
@@ -440,3 +452,134 @@ def test_no_payloads_outside_the_fixtures_module():
         if value in p.read_text(encoding="utf-8", errors="ignore")
     ]
     assert offenders == []
+
+
+# --- NullconeScanner ----------------------------------------------------------------------------------------
+
+HIT_DOMAIN = "evil-login.net"
+HIT_ROW = {"ioc_type": "domain", "value": HIT_DOMAIN, "family_name": "Phishing", "severity": 7,
+           "confidence_score": 0.8, "confidence_tier": "community", "is_likely_fp": False}
+
+
+def row(**update: Any) -> dict[str, Any]:
+    return {**HIT_ROW, **update}
+
+
+def nullcone(responses: dict[str, httpx.Response | dict[str, Any]], **options: Any) -> tuple[NullconeScanner, list[str]]:
+    """A scanner over a mock transport; unknown values are misses. Returns the list of looked-up values."""
+    requested: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        value = request.url.params["value"]
+        requested.append(value)
+        answer = responses.get(value, {"found": False, "value": value})
+        if isinstance(answer, httpx.Response):  # a fresh copy per request
+            return httpx.Response(answer.status_code, headers=answer.headers, content=answer.content)
+        return httpx.Response(200, json=answer)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return NullconeScanner(http_client=client, **options), requested
+
+
+def span(text: str, path: str = "$.body") -> list[TextSpan]:
+    return [TextSpan(path, text)]
+
+
+def test_extract_indicators_normalises_and_skips_reserved_values():
+    text = (
+        "Login at https://User:Pw@Evil-Login.net:8443/reset?token=abc#frag, mirrors 203.0.113.9 and 8.8.8.8, "
+        "file report.pdf, hash " + "A" * 64 + ", docs example.org, staging app.test, lan 10.1.2.3, mail ops@corp.net"
+    )
+    assert extract_indicators(span(text)) == [
+        ("https://evil-login.net:8443/reset", "$.body"),
+        ("evil-login.net", "$.body"),
+        ("8.8.8.8", "$.body"),
+        ("a" * 64, "$.body"),
+    ]
+    assert extract_indicators(span(text), ignore=["evil-login.net", "8.8.8.8"]) == [("a" * 64, "$.body")]
+    assert extract_indicators(span("cdn.evil-login.net and notevil-login.net"), ignore=["evil-login.net"]) == [
+        ("notevil-login.net", "$.body")
+    ]
+
+
+@pytest.mark.parametrize(("severity", "expected"), [(10, "critical"), (8, "critical"), (7, "high"), (6, "high"),
+                                                    (5, "medium"), (4, "medium"), (3, "low"), (0, "low")])
+async def test_severity_mapping(severity, expected):
+    scanner, _ = nullcone({HIT_DOMAIN: row(severity=severity)})
+    (found,) = await scanner.scan(span(f"visit {HIT_DOMAIN} today"))
+    assert (found.scanner, found.rule, found.severity, found.indicator, found.location, found.message) == (
+        "nullcone", "ioc_domain", expected, HIT_DOMAIN, "$.body", "known malicious indicator: Phishing")
+
+
+@pytest.mark.parametrize(("update", "options", "counted"), [
+    ({}, {}, True),
+    ({"is_likely_fp": True}, {}, False),
+    ({"confidence_score": 0.5}, {}, False),
+    ({"confidence_tier": "unverified"}, {}, False),
+    ({"confidence_tier": "unverified"}, {"include_unverified": True}, True),
+    ({"confidence_score": 0.5}, {"min_confidence_score": 0.4}, True),
+])
+async def test_confidence_filters_read_the_response(update, options, counted):
+    scanner, _ = nullcone({HIT_DOMAIN: row(**update)}, **options)
+    assert bool(await scanner.scan(span(HIT_DOMAIN))) is counted
+
+
+async def test_reserved_names_and_private_ips_are_never_requested():
+    scanner, requested = nullcone({})
+    text = ("example.com example.net example.org shop.example qa.test a.invalid c.localhost printer.local "
+            "localhost 127.0.0.1 192.168.1.1 169.254.1.1 http://10.0.0.5/admin")
+    assert await scanner.scan(span(text)) == []
+    assert requested == []
+
+
+async def test_cache_and_max_indicators():
+    scanner, requested = nullcone({HIT_DOMAIN: HIT_ROW}, max_indicators=2)
+    text = f"{HIT_DOMAIN} one.net two.net three.net"
+    first = await scanner.scan(span(text))
+    second = await scanner.scan(span(text))
+    assert requested == [HIT_DOMAIN, "one.net"]
+    assert [f.indicator for f in first] == [f.indicator for f in second] == [HIT_DOMAIN]
+
+
+async def test_http_404_is_a_miss():
+    scanner, _ = nullcone({HIT_DOMAIN: httpx.Response(404)})
+    assert await scanner.scan(span(HIT_DOMAIN)) == []
+
+
+@pytest.mark.parametrize("failure", [httpx.Response(503), httpx.Response(429), httpx.Response(200, text="not json")])
+async def test_lookup_failures_fail_open_with_one_warning(failure, caplog):
+    scanner, _ = nullcone({HIT_DOMAIN: failure, "other.net": failure})
+    with caplog.at_level(logging.WARNING, logger="agent_kit.scanning.nullcone"):
+        assert await scanner.scan(span(HIT_DOMAIN)) == []
+        assert await scanner.scan(span("other.net")) == []
+    assert len([r for r in caplog.records if "lookups failed" in r.getMessage()]) == 1
+
+
+async def test_timeout_fails_open():
+    async def slow(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(1)
+        return httpx.Response(200, json=HIT_ROW)
+
+    scanner = NullconeScanner(http_client=httpx.AsyncClient(transport=httpx.MockTransport(slow)), timeout_s=0.05)
+    assert await scanner.scan(span(HIT_DOMAIN)) == []
+
+
+async def test_rate_limit_pauses_lookups_but_cache_still_resolves():
+    scanner, requested = nullcone({"limited.net": httpx.Response(429, headers={"Retry-After": "30"}), HIT_DOMAIN: HIT_ROW})
+    assert [f.indicator for f in await scanner.scan(span(HIT_DOMAIN))] == [HIT_DOMAIN]
+    assert await scanner.scan(span("limited.net")) == []
+    during_pause = await scanner.scan(span(f"{HIT_DOMAIN} fresh.net"))
+    assert [f.indicator for f in during_pause] == [HIT_DOMAIN]
+    assert requested == [HIT_DOMAIN, "limited.net"]
+
+
+async def test_fail_closed_raises():
+    scanner, _ = nullcone({HIT_DOMAIN: httpx.Response(500)}, fail_closed=True)
+    with pytest.raises(ScannerUnavailableError, match="nullcone"):
+        await scanner.scan(span(HIT_DOMAIN))
+
+
+async def test_owned_client_is_closed():
+    scanner = NullconeScanner()
+    await scanner.aclose()
+    await scanner.aclose()
