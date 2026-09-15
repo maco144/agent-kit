@@ -1,365 +1,169 @@
 # Project Index: agent-kit
 
-Generated: 2026-09-13
+Generated: 2026-09-15 · SDK `agent-kit` **v0.3.0** (unreleased changes in CHANGELOG) · server `agentkit-cloud-server` v0.1.0 · Rising Sun License v1.0 · Python ≥3.11
 
 ## 📁 Project Structure
 
 ```
 agent-kit/
-├── agent_kit/              # SDK package (pip install agent-kit)
-│   ├── agent/              # Core agent primitives
-│   │   ├── agent.py        # Agent + AgentConfig
-│   │   └── loop.py         # AgentLoop (turn execution engine)
-│   ├── durable/            # Durable runs: RunCheckpoint, RunStore, SQLiteRunStore, Checkpointer
-│   ├── hooks.py            # Hooks, Decision, approval requests, SUSPEND, policy helpers
-│   ├── output.py           # OutputSpec — typed run outputs (strict schemas, parsing)
-│   ├── compliance.py       # verify_bundle / load_public_keys (offline evidence verification)
-│   ├── cli.py              # `agent-kit verify`
-│   ├── integrations/       # Report other harnesses to agent-kit Cloud
-│   │   ├── recorder.py     # RunRecorder (harness-neutral runs + audit chain)
-│   │   ├── claude_agent_sdk.py  # ClaudeAgentObserver (hooks + message stream)
-│   │   └── openai_agents.py     # AgentKitTraceProcessor (tracing spans)
-│   ├── cloud/              # Cloud reporting SDK module
-│   │   ├── budgets.py      # BudgetGuard (fleet budget enforcement)
-│   │   ├── models.py       # CloudEvent, EventType
-│   │   └── reporter.py     # CloudReporter (batched, fire-and-forget)
-│   ├── providers/          # LLM provider adapters
-│   │   ├── anthropic.py    # AnthropicProvider (default)
-│   │   ├── openai.py       # OpenAIProvider (optional dep)
-│   │   ├── ollama.py       # OllamaProvider (local models)
-│   │   ├── pricing.py      # Longest-prefix model price lookup
-│   │   └── base.py         # BaseProvider + ProviderConfig
-│   ├── tools/              # Tool system
-│   │   ├── base.py         # Tool class + @tool decorator
-│   │   ├── registry.py     # ToolRegistry (allowlist enforcement)
-│   │   └── mcp.py          # MCPToolset (MCP servers over stdio / streamable HTTP)
-│   ├── orchestrator/       # Multi-agent coordination
-│   │   ├── pipeline.py     # LinearPipeline (sequential)
-│   │   └── dag.py          # DAGOrchestrator (parallel DAG)
-│   ├── memory/             # Conversation memory backends
-│   │   ├── in_memory.py    # InMemoryStore (default, windowed)
-│   │   ├── sqlite.py       # SQLiteMemory (persistent, thread-safe)
-│   │   ├── budget.py       # Token-budget trim planning (prompt size estimates)
-│   │   └── window.py       # window_indices — trimming that keeps tool exchanges intact
-│   ├── reliability/        # Resilience primitives
-│   │   ├── retry.py        # RetryPolicy (exponential backoff)
-│   │   └── circuit_breaker.py  # CircuitBreaker (CLOSED/OPEN/HALF_OPEN)
-│   ├── audit/              # Tamper-evident audit chain
-│   │   └── chain.py        # AuditChain (Merkle hash chain)
-│   ├── observability/      # Tracing
-│   │   └── tracer.py       # AgentTracer (noop/console/OTLP)
-│   ├── types.py            # All Pydantic models (no internal imports)
-│   ├── exceptions.py       # Custom exceptions
-│   └── __init__.py         # Public API surface
-├── server/                 # agent-kit Cloud backend (FastAPI)
+├── agent_kit/                  # SDK package
+│   ├── __init__.py             # Agent, AgentConfig, SUSPEND, Compaction, ClearToolResults, Tool, tool, AgentResult, Message, Turn, ToolResult
+│   ├── types.py                # All shared Pydantic models — import graph root, NO internal imports
+│   ├── exceptions.py           # AgentKitError hierarchy (see ⚠️ below)
+│   ├── hooks.py                # Hooks, Decision, contexts, ApprovalRequest, SUSPEND, require_approval/deny_tools/allow_only
+│   ├── output.py               # OutputSpec — strict provider schemas + parsing for typed results
+│   ├── compliance.py           # verify_bundle, load_public_keys (offline evidence verification)
+│   ├── cli.py                  # `agent-kit verify`
+│   ├── agent/
+│   │   ├── agent.py            # Agent + AgentConfig
+│   │   └── loop.py             # AgentLoop: retry → circuit breaker → hooks → provider → tools → audit → checkpoint → cloud
+│   ├── durable/                # models.py (RunCheckpoint, PendingTurn, RunSummary), store.py (RunStore, SQLiteRunStore CAS), checkpointer.py
+│   ├── providers/              # base.py, anthropic.py (default), openai.py, ollama.py, pricing.py (longest-prefix lookup)
+│   ├── tools/                  # base.py (Tool, @tool), registry.py (allowlist), mcp.py (MCPToolset, stdio(), http())
+│   ├── memory/                 # in_memory.py, sqlite.py, budget.py (token trim planning), window.py (tool-safe trimming)
+│   ├── reliability/            # retry.py (RetryPolicy), circuit_breaker.py (CLOSED/OPEN/HALF_OPEN)
+│   ├── audit/chain.py          # AuditChain — Merkle hash chain, verify(), export_jsonl(), restore()
+│   ├── observability/tracer.py # AgentTracer (noop / console / OTLP)
+│   ├── orchestrator/           # pipeline.py (LinearPipeline), dag.py (DAGOrchestrator, TaskNode)
+│   ├── cloud/                  # reporter.py (CloudReporter), models.py (CloudEvent, EventType), budgets.py (BudgetGuard)
+│   └── integrations/           # recorder.py (RunRecorder), claude_agent_sdk.py (ClaudeAgentObserver), openai_agents.py (AgentKitTraceProcessor, AgentKitRunHooks)
+├── server/                     # agent-kit Cloud (FastAPI + SQLAlchemy async + Alembic)
 │   ├── app/
-│   │   ├── main.py         # FastAPI app + lifespan (alert worker)
-│   │   ├── auth.py         # Bearer token auth → Organization
-│   │   ├── database.py     # SQLAlchemy async engine + SessionLocal
-│   │   ├── models.py       # ORM models (all tables)
-│   │   ├── schemas.py      # Pydantic request/response schemas
-│   │   ├── audit_chain.py  # Server-side Merkle chain verify + append_event
-│   │   ├── budgets.py      # Budget periods, spend, trip/close + alerts
-│   │   ├── compliance/     # signing.py (Ed25519 keys), bundle.py (evidence bundles), retention.py (holds, purge, receipts)
-│   │   ├── otlp/           # OTLP trace ingest
-│   │   │   ├── decode.py     # protobuf / OTLP-JSON → RawSpan
-│   │   │   ├── normalize.py  # GenAI semconv + OpenInference → GenAISpan
-│   │   │   ├── assembler.py  # spans → runs, audit chain, metrics
-│   │   │   └── pricing.py    # server copy of model prices
-│   │   ├── alerting/
-│   │   │   ├── evaluator.py  # Alert rule evaluation + firing
-│   │   │   └── dispatch.py   # Notification dispatch (email/Slack/PD/webhook)
-│   │   └── routers/
-│   │       ├── ingest.py   # POST /v1/events
-│   │       ├── otlp.py     # POST /v1/traces (OTLP/HTTP)
-│   │       ├── budgets.py  # /v1/budgets CRUD + status
-│   │       ├── compliance.py  # /v1/compliance/* + /.well-known/agentkit-signing-keys
-│   │       ├── metrics.py  # GET /v1/metrics/*
-│   │       ├── alerts.py   # CRUD /v1/alerts/*
-│   │       ├── audit.py    # GET /v1/audit/*
-│   │       └── support.py  # GET /v1/support/*
-│   ├── migrations/         # Alembic versions 001–007
-│   ├── tests/              # 10 server test files + OTLP helpers
-│   └── pyproject.toml      # agentkit-cloud-server v0.1.0
-├── tests/                  # SDK tests (18 test files + conftest, MCP fixture server)
-├── examples/               # 10 example scripts + README
-├── docs/                   # 4 cloud documentation files
-├── specs/                  # 13 spec files (00–12)
-└── pyproject.toml          # SDK build config + deps
+│   │   ├── main.py             # app + lifespan; alert worker when ENABLE_ALERT_WORKER=1
+│   │   ├── auth.py · database.py · models.py · schemas.py
+│   │   ├── audit_chain.py      # server-side chain verify + append_event
+│   │   ├── budgets.py          # periods, spend (incl. in-flight), trip/close
+│   │   ├── routers/            # ingest, otlp, metrics, audit, alerts, support, budgets, compliance (9 routers, 39 routes)
+│   │   ├── otlp/               # decode.py → normalize.py → assembler.py; pricing.py
+│   │   ├── alerting/           # evaluator.py, dispatch.py
+│   │   └── compliance/         # signing.py (Ed25519 + rotation), bundle.py, retention.py (holds, purge, receipts)
+│   ├── migrations/versions/    # 001–007
+│   └── tests/                  # 10 test files + conftest + otlp_helpers
+├── tests/                      # 23 SDK test files + conftest + fixtures/mcp_fixture_server.py
+├── examples/                   # 13 runnable scripts + README
+├── docs/                       # 4 cloud docs + superpowers/plans/ (10 implementation plans)
+├── specs/                      # 00–15
+└── .github/workflows/ci.yml
 ```
 
 ## 🚀 Entry Points
 
-- **SDK Package**: `agent_kit/__init__.py` — exports `Agent`, `AgentConfig`, `Tool`, `tool`, result types
-- **Cloud Server**: `server/app/main.py` — FastAPI app (`uvicorn app.main:app`)
-- **Examples**: `hello_agent.py`, `multi_tool_agent.py`, `pipeline_example.py`, `research_dag.py`, `safe_agent.py`, `cloud_monitored.py` (see `examples/README.md`)
-- **SDK Tests**: `pytest tests/` (asyncio_mode=auto)
-- **Server Tests**: `cd server && pytest tests/` (asyncio_mode=auto)
+| What | Where |
+|------|-------|
+| SDK public API | `agent_kit/__init__.py` |
+| CLI | `agent-kit` → `agent_kit.cli:main` (`verify` subcommand) |
+| Cloud server | `server/app/main.py` — `uvicorn app.main:app` |
+| SDK tests | `pytest` — 267 tests |
+| Server tests | `cd server && pytest` — 160 tests |
 
-## 📦 Core Modules — SDK
+## 📦 SDK Surface
 
-### `agent_kit.agent.agent` — Agent
-- **Exports**: `Agent`, `AgentConfig`
-- Primary user-facing class. Wraps provider + tools + memory + tracer + audit chain + cloud reporter.
-- Key methods: `run(prompt) -> AgentResult`, `stream(prompt) -> AsyncIterator[str]` (full loop: tools, retry, audit), `add_tool(t) -> Agent`; `last_result` holds the latest `AgentResult`
+### `Agent` / `AgentConfig` (`agent_kit/agent/agent.py`)
+- `Agent(provider, tools=, config=, memory=)`; `add_tool()`, `audit`, `tracer`, `memory`, `last_result`
+- `run(prompt, output_type=?, run_id=?) -> AgentResult[T]` · `stream(prompt)` · `resume(run_id, approvals=?, output_type=?)` · `resume_stream(...)` (sets `last_result` when exhausted)
+- `AgentConfig` groups:
+  - **Core**: `model`, `system_prompt`, `max_turns=20`, `max_tokens_per_turn=4096`, `allowed_tools`
+  - **Reliability**: `retry_policy`, `circuit_breaker`, `audit_enabled=True`, `tracer`
+  - **Cost**: `max_run_cost_usd`, `enforce_budgets` (needs `cloud`)
+  - **Policy**: `hooks`, `approver` (async fn or `SUSPEND`), `approval_timeout_s=300`
+  - **Typed**: `output_retries=2`
+  - **Context**: `thinking`, `effort`, `prompt_caching=True`, `compaction`, `clear_tool_results`, `provider_options`, `context_budget_tokens=150_000`, `memory_window=None`
+  - **Durable**: `run_store`
 
-### `agent_kit.types` — Shared Pydantic Models
-- **Exports**: `Message`, `ToolCall`, `ToolResult`, `Turn`, `AgentResult`, `PipelineResult`, `RetryPolicyConfig`, `BackoffConfig`, `CircuitBreakerConfig`, `SpanEvent`, `AuditEventRecord`
-- No internal imports — foundation of the import graph.
+### Feature map
 
-### `agent_kit.cloud.reporter` — CloudReporter
-- **Exports**: `CloudReporter`
-- Batches and ships lifecycle events to agent-kit Cloud over gzip-compressed NDJSON.
-- Fire-and-forget: errors are logged, never raised. Agent performance is never blocked.
-- Hooks: `on_run_start`, `on_turn_complete`, `on_run_complete`, `on_run_error`, `on_circuit_state_change`, `on_audit_flush`
-- Config: `api_key` (or `AGENTKIT_API_KEY` env), `project`, `agent_name`, `flush_interval_s=5.0`, `max_queue_size=1000`
+| Feature | Modules | Entry | Spec | Example |
+|---------|---------|-------|------|---------|
+| Tools + allowlist | `tools/base.py`, `tools/registry.py` | `@tool(description, idempotent, cost_estimate)` | — | `multi_tool_agent.py`, `safe_agent.py` |
+| Orchestration | `orchestrator/` | `LinearPipeline`, `DAGOrchestrator` | — | `pipeline_example.py`, `research_dag.py` |
+| Audit chain | `audit/chain.py` | `result.audit_root_hash`, `AuditChain.verify()` | 01 | `safe_agent.py` |
+| Cloud reporting | `cloud/reporter.py` | `AgentConfig(cloud=CloudReporter(...))` | 01–04 | `cloud_monitored.py` |
+| Harness adapters | `integrations/` | `ClaudeAgentObserver`, `AgentKitTraceProcessor` | 07 | `*_monitored.py` |
+| Cost circuit breaker | `cloud/budgets.py` | `max_run_cost_usd`, `enforce_budgets` | 09 | — |
+| Evidence verify | `compliance.py`, `cli.py` | `agent-kit verify bundle.zip` | 10 | — |
+| Hooks + approvals | `hooks.py`, `agent/loop.py` | `Hooks(before_tool, after_tool, before_llm)` | 11 | `approval_gate.py` |
+| MCP client | `tools/mcp.py` | `async with MCPToolset(stdio(...), http(...))` | 12 | `mcp_tools.py` |
+| Typed results | `output.py` | `run(prompt, output_type=Model).parsed` | 13 | `typed_output.py` |
+| Context management | `memory/budget.py`, `memory/window.py`, `providers/anthropic.py` | `Compaction`, `ClearToolResults`, `context_budget_tokens` | 14 | `long_running_agent.py` |
+| Durable runs | `durable/` | `run_store=SQLiteRunStore("runs.db")`, `approver=SUSPEND`, `resume()` | 15 | `durable_approval.py` |
 
-### `agent_kit.cloud.models` — Wire Types
-- **Exports**: `CloudEvent`, `EventType`
-- `EventType`: `run_start`, `turn_complete`, `run_complete`, `run_error`, `circuit_state_change`, `audit_flush`
+### Providers
+`AnthropicProvider` (default; native content round-trip, caching, thinking, compaction, `output_config.format`) · `OpenAIProvider` (`[openai]`, `response_format`) · `OllamaProvider` (httpx) — all subclass `BaseProvider` with `complete()`, `stream()`, `name()`, `supports_structured_output`.
 
-### `agent_kit.providers` — LLM Adapters
-- **Default**: `AnthropicProvider` (uses `ANTHROPIC_API_KEY`)
-- **Optional**: `OpenAIProvider` (`pip install agent-kit[openai]`), `OllamaProvider` (local)
-- All extend `BaseProvider` with `complete()` and `stream()` methods.
+### Audit event types (client chain)
+`agent_start`, `llm_complete`, `tool_call`, `agent_complete`, `circuit_breaker_state_change`, `budget_exceeded` · hooks: `tool_denied`, `llm_call_denied`, `tool_output_replaced`, `approval_{requested,granted,denied}` · `output_validation_failed` · `context_{trimmed,compacted,edited}` · durable: `run_suspended`, `run_resumed`, `tool_interrupted`.
+Cloud wire `EventType`: `run_start`, `turn_complete`, `run_complete`, `run_error`, `circuit_state_change`, `audit_flush`.
 
-### `agent_kit.tools.base` — Tool System
-- **Exports**: `Tool`, `@tool(description, idempotent, cost_estimate)`
-- `@tool` decorator converts async functions to `Tool` instances with auto-generated JSON schema.
+## 📦 Cloud Server API
 
-### `agent_kit.orchestrator` — Multi-Agent Coordination
-- `LinearPipeline(stages)` — sequential pipeline with `{input}` template substitution
-- `DAGOrchestrator(nodes)` — parallel DAG with dependency-based execution; `TaskNode` has `depends_on` + `{upstream:<node_id>}` template syntax
+| Router | Routes |
+|--------|--------|
+| `ingest.py` | `POST /v1/events` — gzip NDJSON from SDK; populates runs/events/metrics/CB; triggers chain verify + alerts |
+| `otlp.py` | `POST /v1/traces` — OTLP/HTTP protobuf/JSON; GenAI semconv + OpenInference → runs, `chain_origin="ingest"`; content never stored |
+| `metrics.py` | `GET /v1/metrics/{summary,cost,runs,agents,circuit-breaker,active}` |
+| `audit.py` | `GET /v1/audit/runs[/{id}[/verify\|/export]]`, `GET /v1/audit/events` — cursor-paginated, `jsonl`/`csv` export |
+| `alerts.py` | channels (email/Slack/PagerDuty/webhook) + `/test`; rules (`circuit_breaker_open`, `cost_anomaly`, `error_rate`, `audit_integrity_failure`, `budget_exceeded`); firings + ack |
+| `support.py` | `GET /v1/support/{sla,context}`, `PATCH /v1/support/tier` (free/pro/enterprise) |
+| `budgets.py` | `GET\|POST /v1/budgets`, `PATCH\|DELETE /v1/budgets/{id}`, `GET /v1/budgets/status` (polled by `BudgetGuard`) |
+| `compliance.py` | `GET /.well-known/agentkit-signing-keys`; `/v1/compliance/{export,retention,holds,holds/{id}/release,deletions}` |
 
-### `agent_kit.memory` — Conversation Memory
-- `InMemoryStore(window=50)` — default, in-process sliding window
-- `SQLiteMemory(path, window=100)` — persistent, thread-safe, survives restarts
+## 🗄️ Migrations (`server/migrations/versions/`)
 
-### `agent_kit.reliability` — Resilience
-- `CircuitBreaker` — 3-state (CLOSED→OPEN→HALF_OPEN), raises `CircuitOpenError`
-- `RetryPolicy` — exponential backoff with jitter, configurable retryable exception types
-
-### `agent_kit.audit.chain` — Audit Chain
-- `AuditChain` — Merkle-linked immutable event log; `verify()` checks integrity, `export_jsonl()` for compliance
-
-### `agent_kit.observability.tracer` — Tracing
-- `AgentTracer(backend=None|"console"|"otlp")` — no-op by default; OTLP requires `pip install agent-kit[otel]`
-
-## 📦 Core Modules — Cloud Server
-
-### `server/app/routers/ingest.py` — Event Ingest
-- `POST /v1/events` — receives gzip-compressed NDJSON batches from the SDK
-- Processes all 6 event types; populates `AuditRun`, `AuditEvent`, `ActiveRunCache`, `AgentMetricSnapshot`, `CircuitBreakerEvent`
-- Triggers background Merkle chain verification after each `audit_flush`
-- Triggers alert evaluation on `circuit_state_change` events
-
-### `server/app/routers/compliance.py` — Compliance Exports
-- `GET /.well-known/agentkit-signing-keys` — Ed25519 public keys (no auth)
-- `GET /v1/compliance/export` — signed evidence bundle zip for a period/scope (≤10,000 runs)
-- `GET|PUT /v1/compliance/retention`, `GET|POST /v1/compliance/holds`, `POST /v1/compliance/holds/{id}/release`, `GET /v1/compliance/deletions`
-
-### `server/app/routers/budgets.py` — Cost Circuit Breaker
-- `GET|POST /v1/budgets`, `PATCH|DELETE /v1/budgets/{id}` — daily/weekly/monthly UTC spend ceilings with live spend and trip state
-- `GET /v1/budgets/status?project=&agent_name=` — budgets covering one agent; polled by SDK `BudgetGuard`
-- `budget_exceeded` alert rules fire on trip, resolve on reset / raised limit
-
-### `server/app/routers/otlp.py` — OTLP Trace Ingest
-- `POST /v1/traces` — OTLP/HTTP (protobuf or JSON, gzip); GenAI semconv + OpenInference spans become runs with server-built audit chains (`chain_origin: "ingest"`); content never stored
-
-### `server/app/routers/metrics.py` — Fleet Dashboard API
-- `GET /v1/metrics/summary` — aggregate KPIs (runs, errors, cost, tokens, active count)
-- `GET /v1/metrics/cost` — cost time-series, grouped by `agent_name|model|project`, resolutions `1m|1h|1d`
-- `GET /v1/metrics/runs` — runs time-series (total, success, error, avg_turns, avg_duration)
-- `GET /v1/metrics/agents` — per-agent summary with circuit breaker state
-- `GET /v1/metrics/circuit-breaker` — circuit breaker state history with open-duration tracking
-- `GET /v1/metrics/active` — live active runs (excludes stale >1h)
-
-### `server/app/routers/audit.py` — Hosted Audit Trail
-- `GET /v1/audit/runs` — list runs; filters `project`, `agent_name` (trailing `*` wildcard), `from`/`to`, `integrity`; cursor-paginated (max 500)
-- `GET /v1/audit/runs/{run_id}` — run detail with events
-- `GET /v1/audit/runs/{run_id}/verify` — re-derive chain hashes on demand (non-mutating)
-- `GET /v1/audit/runs/{run_id}/export` — export chain as `jsonl` or `csv`
-- `GET /v1/audit/events` — event search by `event_type`, `actor`, `project`, time range
-
-### `server/app/routers/alerts.py` — Alerting CRUD
-- `GET|POST|DELETE /v1/alerts/channels` — notification channels (email, Slack, PagerDuty, webhook)
-- `POST /v1/alerts/channels/{id}/test` — send test notification
-- `GET|POST|PATCH|DELETE /v1/alerts/rules` — alert rules (circuit_breaker_open, cost_anomaly, error_rate, audit_integrity_failure)
-- `GET /v1/alerts/firing` — firing history with state filter
-- `POST /v1/alerts/firing/{id}/ack` — acknowledge a firing with optional comment
-
-### `server/app/routers/support.py` — Support Context + SLA
-- `GET /v1/support/sla` — SLA definition for org's current tier (free/pro/enterprise)
-- `GET /v1/support/context` — rich operational snapshot: metrics, CB status, alert status, audit status, agent table
-- `PATCH /v1/support/tier` — update org tier + plan metadata
-
-### `server/app/alerting/evaluator.py` — Alert Evaluation
-- `evaluate_all_rules(db)` — periodic evaluation of all enabled rules (called by background worker every 60s)
-- `fire_circuit_breaker_open(...)` — immediate fire on CB state change
-- `fire_audit_integrity_failure(...)` — immediate fire on chain verification failure
-
-### `server/app/alerting/dispatch.py` — Notification Dispatch
-- Routes firings to channel-type handlers: email, Slack, PagerDuty, webhook
-- `send_test_notification(channel)` — validates channel config at creation time
-
-## 🗄️ Database Schema
-
-Managed by Alembic (`server/migrations/versions/`):
-
-| Migration | Tables Added |
-|-----------|-------------|
-| `001_initial_schema` | `organizations`, `cloud_event_log`, `audit_runs`, `audit_events` |
-| `002_metrics_schema` | `agent_metric_snapshots`, `active_run_cache`, `circuit_breaker_events` |
-| `003_alerting` | `alert_channels`, `alert_rules`, `alert_firings` |
-| `004_org_tier` | `org.tier`, `org.plan_metadata` columns |
+| Rev | Adds |
+|-----|------|
+| 001 | `organizations`, `cloud_event_log`, `audit_runs`, `audit_events` |
+| 002 | `agent_metric_snapshots`, `active_run_cache`, `circuit_breaker_events` |
+| 003 | `alert_channels`, `alert_rules`, `alert_firings` |
+| 004 | `organizations.tier`, `plan_metadata` |
+| 005 | `audit_runs.chain_origin`, `active_run_cache.last_event_at` / `failure_message` |
+| 006 | `budgets` |
+| 007 | `organizations.audit_retention_days`, `signing_keys`, `legal_holds`, `deletion_receipts` |
 
 ## 🔧 Configuration
 
-- `pyproject.toml` — SDK build (hatchling), deps, pytest, ruff, mypy strict; license: Rising Sun License v1.0
-- `server/pyproject.toml` — server build (hatchling), FastAPI/SQLAlchemy/Alembic deps; `agentkit-cloud-server v0.1.0`
-- `server/alembic.ini` — Alembic config; reads `DATABASE_URL` env var
-- Env vars: `ANTHROPIC_API_KEY`, `AGENTKIT_API_KEY`, `DATABASE_URL`, `ENABLE_ALERT_WORKER`, `SMTP_HOST`/`SMTP_PORT`/`SMTP_SECURITY`/`SMTP_USERNAME`/`SMTP_PASSWORD`/`SMTP_FROM` (email alerts)
-- `.github/workflows/ci.yml` — CI: ruff + mypy + pytest (SDK), ruff + pytest + `alembic upgrade head` (server), example byte-compile; Python 3.11 & 3.12
-- `agent_kit/py.typed` — PEP 561 marker; downstream type checkers see the inline hints
-
-## 📚 Documentation
-
-| File | Topic |
-|------|-------|
-| `README.md` | SDK quick start, all features with code examples |
-| `CONTRIBUTING.md` | Setup, the checks CI runs, conventions, adding providers/endpoints |
-| `CHANGELOG.md` | Release history (Keep a Changelog + SemVer) |
-| `examples/README.md` | Index of the six runnable examples |
-| `docs/cloud-quickstart.md` | Connecting the SDK to agent-kit Cloud |
-| `docs/self-hosting.md` | Running the server yourself (Docker, Postgres, Alembic) |
-| `docs/api-reference.md` | Full REST API reference |
-| `docs/troubleshooting.md` | Common issues and fixes |
-
-## 📐 Specs
-
-| File | Topic |
-|------|-------|
-| `specs/00-platform-overview.md` | Cloud platform architecture overview |
-| `specs/01-audit-trail.md` | Hosted audit trail (spec implemented) |
-| `specs/02-fleet-dashboard.md` | Agent fleet dashboard metrics (spec implemented) |
-| `specs/03-alerting.md` | Alerting rules, channels, evaluator (spec implemented) |
-| `specs/04-sla-support.md` | SLA-backed support context API (spec implemented) |
-| `specs/05-dashboard-ui.md` | Dashboard UI design spec |
-| `specs/15-durable-runs.md` | Checkpoints, suspend/resume approvals, crash recovery, CAS run store (implemented) |
-| `specs/14-context-management.md` | Native content round-trip, caching, reasoning, compaction, token budget (implemented) |
-| `specs/13-typed-results.md` | Typed results: output_type → AgentResult[T] via native structured outputs (implemented) |
-| `specs/12-mcp-client.md` | MCP client: MCPToolset over stdio / streamable HTTP (implemented) |
-| `specs/11-hooks-approval-gates.md` | before_tool / after_tool / before_llm hooks with approvals (implemented) |
-| `specs/10-compliance-exports.md` | Signed evidence bundles, retention, legal holds, deletion receipts (implemented) |
-| `specs/09-cost-circuit-breaker.md` | Per-run caps + fleet budgets with enforcement and alerts (implemented) |
-| `specs/08-otlp-ingest.md` | OTLP trace ingest for GenAI semconv + OpenInference (implemented) |
-| `specs/07-harness-adapters.md` | Claude Agent SDK + OpenAI Agents SDK adapters (implemented) |
-| `specs/06-harness-roadmap.md` | Harness roadmap: Tier 1 fundamentals (done), Tier 2 parity, Tier 3 differentiators |
-
-## 🧪 Test Coverage
-
-### SDK Tests (`tests/`)
-
-| File | Subject |
-|------|---------|
-| `test_agent.py` | Agent.run(), AgentConfig |
-| `test_tools.py` | @tool decorator, ToolRegistry |
-| `test_circuit_breaker.py` | CircuitBreaker state machine |
-| `test_audit.py` | AuditChain integrity |
-| `test_retry.py` | RetryPolicy backoff |
-| `test_pipeline.py` | LinearPipeline |
-| `test_dag.py` | DAGOrchestrator + cycle detection |
-| `test_sqlite_memory.py` | SQLiteMemory persistence |
-| `test_cloud_reporter.py` | CloudReporter batching + HTTP shipping |
-| `test_provider_requests.py` | Exact Anthropic/OpenAI request payloads via fake clients; pricing; streaming |
-| `test_memory_window.py` | Tool-safe memory trimming, `trim_oldest`, SQLite tool_calls persistence + migration |
-| `test_context_budget.py` | Token budget planning and loop trimming, request options, context event audit |
-| `test_budgets.py` | Per-run caps, BudgetGuard caching / local spend / fail-open, fleet enforcement |
-| `test_compliance.py` | Offline bundle verification (tampering, wrong keys, receipts) and CLI exit codes |
-| `test_output.py` | OutputSpec strict schema transform, root wrapping, parsing and error formatting |
-| `test_typed_results.py` | Typed runs: native vs prompt mode, repair turns, streaming, tools, audit |
-| `test_mcp.py` | MCPToolset against a real fixture MCP server over stdio and streamable HTTP |
-| `test_run_store.py` | SQLiteRunStore CAS writes, mark_tool_started, list/delete, Checkpointer |
-| `test_durable_runs.py` | Suspend/resume approvals, crash recovery, concurrent resume, typed + streaming resume |
-| `test_hooks.py` | Hook decisions, approvals (grant/deny/timeout/error), output replacement, stop_run, audit events |
-| `test_integrations_recorder.py` | RunRecorder lifecycle, deferred run_start, cost reconciliation, chain integrity |
-| `test_integrations_claude.py` | Claude Agent SDK adapter (fakes + real SDK types) |
-| `test_integrations_openai_agents.py` | OpenAI Agents SDK adapter via real `agents.tracing` |
-| `conftest.py` | Shared fixtures |
-
-### Server Tests (`server/tests/`)
-
-| File | Subject |
-|------|---------|
-| `test_ingest.py` | POST /v1/events — all event types, idempotency, chain verification |
-| `test_metrics.py` | GET /v1/metrics/* — all endpoints |
-| `test_alerts.py` | Alert CRUD, firings, ack workflow |
-| `test_support.py` | Support context, SLA endpoints, tier management |
-| `test_audit_chain_append.py` | Server-built chains, `chain_origin` in the runs API |
-| `test_otlp_decode.py` | OTLP protobuf / JSON decoding, gzip, partial success |
-| `test_otlp_normalize.py` | GenAI semconv + OpenInference mapping, no content retained, pricing |
-| `test_budgets.py` | Budget periods, spend (snapshots + in-flight), trip/close, alerts, API |
-| `test_compliance.py` | Signing keys + rotation, retention, legal holds, purge receipts, evidence bundles |
-| `test_otlp_ingest.py` | `POST /v1/traces` end to end: lifecycle, idle/late spans, retries, real SDK bytes |
+- `pyproject.toml` — hatchling; extras `openai`, `ollama`, `otel`, `claude-agent-sdk`, `openai-agents`, `compliance`, `mcp`, `all`, `dev`; ruff pinned `>=0.15,<0.17` with explicit `select`; mypy strict
+- `server/pyproject.toml` — adds `opentelemetry-proto`, `cryptography`
+- `.github/workflows/ci.yml` — SDK ruff + mypy + pytest; server ruff + pytest + `alembic upgrade head`; examples byte-compile; Py 3.11 & 3.12
+- Env: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AGENTKIT_API_KEY`, `DATABASE_URL`, `ENABLE_ALERT_WORKER`, `AGENTKIT_SIGNING_KEY`, `SMTP_*`
 
 ## 🔗 Key Dependencies
 
-### SDK
+| SDK core | Server core |
+|----------|-------------|
+| `anthropic>=1.0` (uses httpx2 — respx can't intercept) | `fastapi>=0.111`, `uvicorn[standard]>=0.30` |
+| `pydantic>=2.5` | `sqlalchemy[asyncio]>=2.0`, `alembic>=1.13` |
+| `httpx>=0.27` | `asyncpg>=0.29` (prod), `aiosqlite>=0.20` (dev/test) |
+| optional: `openai>=1.40`, `mcp>=2.0`, `cryptography>=41`, `claude-agent-sdk>=0.2`, `openai-agents>=0.22`, `opentelemetry-*>=1.24` | `opentelemetry-proto>=1.24`, `cryptography>=41` |
 
-| Dependency | Version | Purpose |
-|-----------|---------|---------|
-| `anthropic` | >=0.25 | Anthropic LLM provider (core) |
-| `pydantic` | >=2.5 | Type-safe models throughout |
-| `httpx` | >=0.27 | HTTP client for Ollama + OpenAI + CloudReporter |
-| `openai` | >=1.30 | Optional: OpenAI provider |
-| `opentelemetry-api/sdk` | >=1.24 | Optional: OTLP tracing |
+## 📚 Docs & Specs
 
-### Server
+- `README.md` — quick start + a section per feature (hooks, MCP, typed, context, durable); `CHANGELOG.md` — `[Unreleased]` holds everything since 0.2.0; `CONTRIBUTING.md`
+- `docs/` — `cloud-quickstart.md`, `self-hosting.md`, `api-reference.md` (covers traces, budgets, compliance), `troubleshooting.md`
+- `docs/superpowers/plans/` — implementation plans for tier-1 fundamentals, harness adapters, OTLP, cost breaker, compliance, hooks, MCP, typed results, context mgmt, durable runs
+- `specs/` — 00 platform · 01 audit trail · 02 fleet dashboard · 03 alerting · 04 SLA support · **05 dashboard UI (not built)** · 06 harness roadmap (tier status) · 07 harness adapters · 08 OTLP ingest · 09 cost breaker · 10 compliance exports · 11 hooks · 12 MCP client · 13 typed results · 14 context mgmt · 15 durable runs
 
-| Dependency | Version | Purpose |
-|-----------|---------|---------|
-| `fastapi` | >=0.111 | Web framework |
-| `uvicorn[standard]` | >=0.30 | ASGI server |
-| `sqlalchemy[asyncio]` | >=2.0 | Async ORM |
-| `asyncpg` | >=0.29 | PostgreSQL async driver (production) |
-| `aiosqlite` | >=0.20 | SQLite async driver (dev/test) |
-| `alembic` | >=1.13 | Database migrations |
+## 🧪 Tests
+
+**SDK (`tests/`, 267)** — agent, tools, retry, circuit_breaker, audit, pipeline, dag, sqlite_memory, memory_window, cloud_reporter, provider_requests (fake clients record kwargs), context_budget, budgets, compliance, output, typed_results, mcp (real fixture server, stdio + HTTP), hooks, run_store, durable_runs, integrations_{recorder,claude,openai_agents}. Loop tests use `MockProvider` from `conftest.py`.
+
+**Server (`server/tests/`, 160)** — ingest, metrics, alerts, support, audit_chain_append, otlp_{decode,normalize,ingest}, budgets, compliance. Real in-process aiosqlite; never mock the DB.
+
+Both: `asyncio_mode = "auto"`.
+
+## ⚠️ Exceptions (`agent_kit/exceptions.py`, base `AgentKitError`)
+
+| Area | Exceptions |
+|------|-----------|
+| Loop | `ProviderError`, `CircuitOpenError`, `MaxTurnsExceededError`, `BudgetExceededError`, `RunStoppedByHookError` |
+| Tools | `ToolNotFoundError`, `ToolNotAllowedError`, `ToolExecutionError`, `MCPConnectionError`, `MCPToolError` |
+| Output | `OutputValidationError` |
+| Durable | `RunNotFoundError`, `RunConflictError` (CAS lost), `CheckpointError` |
+| Other | `AuditVerificationError`, `DAGCycleError`, `DAGMissingDependencyError` |
 
 ## 📝 Quick Start
 
-### SDK
 ```bash
-pip install agent-kit
-export ANTHROPIC_API_KEY=sk-ant-...
-```
-```python
-from agent_kit import Agent
-from agent_kit.providers import AnthropicProvider
-
-agent = Agent(AnthropicProvider())
-result = await agent.run("Hello!")
-print(result.output)
-```
-
-### SDK + Cloud Reporting
-```python
-from agent_kit.cloud import CloudReporter
-
-reporter = CloudReporter(api_key="akt_live_...", project="production", agent_name="my-agent")
-agent = Agent(AnthropicProvider(), config=AgentConfig(cloud=reporter))
-```
-
-### Cloud Server
-```bash
-cd server
-pip install -e ".[dev]"
+pip install -e ".[dev]" && pytest                                   # SDK
+cd server && pip install -e ".[dev]" && pytest                      # server
 DATABASE_URL=sqlite+aiosqlite:///./dev.db uvicorn app.main:app --reload
 ```
-
-## ⚠️ Key Exceptions
-
-- `CircuitOpenError` — circuit breaker is OPEN, no LLM calls made
-- `MaxTurnsExceededError` — agent hit `max_turns` limit
-- `ProviderError` — LLM call failed (retries exhausted)
-- `ToolNotAllowedError` — LLM tried to call a tool not in `allowed_tools`
-- `DAGCycleError` / `DAGMissingDependencyError` — invalid DAG structure

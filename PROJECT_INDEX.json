@@ -1,443 +1,140 @@
 {
   "project": "agent-kit",
-  "version": "0.2.0",
-  "generated": "2026-09-13",
+  "version": "0.3.0",
+  "server_version": "0.1.0",
+  "generated": "2026-09-15",
   "description": "Production-ready framework for building AI agents. Type-safe. Observable. Circuit-broken.",
   "license": "Rising Sun License v1.0",
   "python_requires": ">=3.11",
   "entry_points": {
     "package": "agent_kit/__init__.py",
-    "server": "server/app/main.py",
-    "examples": [
-      "examples/hello_agent.py",
-      "examples/multi_tool_agent.py",
-      "examples/pipeline_example.py",
-      "examples/research_dag.py",
-      "examples/safe_agent.py",
-      "examples/cloud_monitored.py"
-    ],
-    "tests": "pytest tests/",
+    "cli": "agent-kit = agent_kit.cli:main (verify)",
+    "server": "server/app/main.py (uvicorn app.main:app)",
+    "tests": "pytest",
     "server_tests": "cd server && pytest"
   },
   "public_api": {
-    "agent_kit": [
-      "Agent",
-      "AgentConfig",
-      "Tool",
-      "tool",
-      "AgentResult",
-      "Message",
-      "Turn",
-      "ToolResult"
-    ],
-    "agent_kit.providers": [
-      "AnthropicProvider",
-      "BaseProvider",
-      "ProviderConfig"
-    ],
-    "agent_kit.providers.openai": [
-      "OpenAIProvider"
-    ],
-    "agent_kit.providers.ollama": [
-      "OllamaProvider"
-    ],
-    "agent_kit.orchestrator": [
-      "LinearPipeline",
-      "DAGOrchestrator",
-      "DAGResult",
-      "TaskNode"
-    ],
-    "agent_kit.memory.sqlite": [
-      "SQLiteMemory"
-    ],
-    "agent_kit.memory.in_memory": [
-      "InMemoryStore"
-    ],
-    "agent_kit.observability": [
-      "AgentTracer"
-    ],
-    "agent_kit.types": [
-      "Message",
-      "ToolCall",
-      "ToolResult",
-      "ToolSchema",
-      "Turn",
-      "CostSummary",
-      "AgentResult",
-      "PipelineResult",
-      "RetryPolicyConfig",
-      "BackoffConfig",
-      "CircuitBreakerConfig",
-      "SpanEvent",
-      "SpanKind",
-      "AuditEventRecord"
-    ]
+    "agent_kit": ["Agent", "AgentConfig", "SUSPEND", "Compaction", "ClearToolResults", "Tool", "tool", "AgentResult", "Message", "Turn", "ToolResult"],
+    "agent_kit.providers": ["AnthropicProvider", "BaseProvider", "ProviderConfig"],
+    "agent_kit.providers.openai": ["OpenAIProvider"],
+    "agent_kit.providers.ollama": ["OllamaProvider"],
+    "agent_kit.tools": ["Tool", "tool", "ToolRegistry"],
+    "agent_kit.tools.mcp": ["MCPToolset", "StdioServer", "HttpServer", "stdio", "http", "require_approval_unless_read_only"],
+    "agent_kit.hooks": ["Hooks", "Decision", "ToolCallContext", "ToolResultContext", "LLMCallContext", "ApprovalRequest", "Suspend", "SUSPEND", "require_approval", "deny_tools", "allow_only"],
+    "agent_kit.output": ["OutputSpec", "OutputParseError"],
+    "agent_kit.durable": ["CHECKPOINT_SCHEMA_VERSION", "Checkpointer", "PendingTurn", "RunCheckpoint", "RunStatus", "RunStore", "RunSummary", "SQLiteRunStore"],
+    "agent_kit.memory": ["InMemoryStore", "SQLiteMemory"],
+    "agent_kit.orchestrator": ["LinearPipeline", "DAGOrchestrator", "DAGResult", "TaskNode"],
+    "agent_kit.cloud": ["CloudReporter"],
+    "agent_kit.cloud.budgets": ["BudgetGuard"],
+    "agent_kit.integrations.recorder": ["RunRecorder"],
+    "agent_kit.integrations.claude_agent_sdk": ["ClaudeAgentObserver"],
+    "agent_kit.integrations.openai_agents": ["AgentKitTraceProcessor", "AgentKitRunHooks"],
+    "agent_kit.compliance": ["verify_bundle", "load_public_keys", "BundleReport"],
+    "agent_kit.observability": ["AgentTracer"],
+    "agent_kit.types": ["ToolCall", "Message", "ToolSchema", "ToolResult", "CostSummary", "Turn", "PendingApproval", "AgentResult", "BackoffConfig", "RetryPolicyConfig", "CircuitBreakerConfig", "Compaction", "ClearToolResults", "RequestOptions", "SpanKind", "SpanEvent", "AuditEventRecord", "PipelineResult"]
   },
-  "modules": [
-    {
-      "path": "agent_kit/agent/agent.py",
-      "exports": [
-        "Agent",
-        "AgentConfig"
-      ],
-      "purpose": "Primary user-facing agent primitive"
-    },
-    {
-      "path": "agent_kit/agent/loop.py",
-      "exports": [
-        "AgentLoop"
-      ],
-      "purpose": "Turn execution engine (retry, circuit breaker, audit)"
-    },
-    {
-      "path": "agent_kit/cloud/reporter.py",
-      "exports": [
-        "CloudReporter"
-      ],
-      "purpose": "Batched fire-and-forget lifecycle event shipping"
-    },
-    {
-      "path": "agent_kit/cloud/models.py",
-      "exports": [
-        "CloudEvent",
-        "EventType"
-      ],
-      "purpose": "Wire types for cloud ingest"
-    },
-    {
-      "path": "agent_kit/types.py",
-      "exports": "all Pydantic models",
-      "purpose": "Foundation \u2014 no internal imports"
-    },
-    {
-      "path": "agent_kit/providers/anthropic.py",
-      "exports": [
-        "AnthropicProvider"
-      ],
-      "purpose": "Anthropic LLM adapter"
-    },
-    {
-      "path": "agent_kit/providers/openai.py",
-      "exports": [
-        "OpenAIProvider"
-      ],
-      "purpose": "OpenAI / compatible endpoint adapter"
-    },
-    {
-      "path": "agent_kit/providers/ollama.py",
-      "exports": [
-        "OllamaProvider"
-      ],
-      "purpose": "Ollama local model adapter"
-    },
-    {
-      "path": "agent_kit/providers/base.py",
-      "exports": [
-        "BaseProvider",
-        "ProviderConfig"
-      ],
-      "purpose": "Abstract provider interface"
-    },
-    {
-      "path": "agent_kit/tools/base.py",
-      "exports": [
-        "Tool",
-        "tool"
-      ],
-      "purpose": "@tool decorator + Tool class"
-    },
-    {
-      "path": "agent_kit/tools/registry.py",
-      "exports": [
-        "ToolRegistry"
-      ],
-      "purpose": "Tool allowlist enforcement"
-    },
-    {
-      "path": "agent_kit/orchestrator/pipeline.py",
-      "exports": [
-        "LinearPipeline"
-      ],
-      "purpose": "Sequential multi-agent pipeline"
-    },
-    {
-      "path": "agent_kit/orchestrator/dag.py",
-      "exports": [
-        "DAGOrchestrator",
-        "DAGResult",
-        "TaskNode"
-      ],
-      "purpose": "Parallel DAG execution"
-    },
-    {
-      "path": "agent_kit/memory/in_memory.py",
-      "exports": [
-        "InMemoryStore"
-      ],
-      "purpose": "In-process windowed memory"
-    },
-    {
-      "path": "agent_kit/memory/sqlite.py",
-      "exports": [
-        "SQLiteMemory"
-      ],
-      "purpose": "Persistent thread-safe SQLite memory"
-    },
-    {
-      "path": "agent_kit/reliability/circuit_breaker.py",
-      "exports": [
-        "CircuitBreaker"
-      ],
-      "purpose": "3-state circuit breaker"
-    },
-    {
-      "path": "agent_kit/reliability/retry.py",
-      "exports": [
-        "RetryPolicy"
-      ],
-      "purpose": "Exponential backoff retry"
-    },
-    {
-      "path": "agent_kit/audit/chain.py",
-      "exports": [
-        "AuditChain"
-      ],
-      "purpose": "Merkle hash-linked audit log"
-    },
-    {
-      "path": "agent_kit/observability/tracer.py",
-      "exports": [
-        "AgentTracer"
-      ],
-      "purpose": "noop/console/OTLP tracing"
-    },
-    {
-      "path": "agent_kit/exceptions.py",
-      "exports": [
-        "CircuitOpenError",
-        "MaxTurnsExceededError",
-        "ProviderError",
-        "ToolNotAllowedError",
-        "DAGCycleError",
-        "DAGMissingDependencyError"
-      ],
-      "purpose": "Custom exceptions"
-    }
-  ],
-  "dependencies": {
-    "core": {
-      "anthropic": ">=0.25",
-      "pydantic": ">=2.5",
-      "httpx": ">=0.27"
-    },
-    "optional": {
-      "openai": ">=1.30",
-      "opentelemetry-api": ">=1.24",
-      "opentelemetry-sdk": ">=1.24"
-    },
-    "dev": {
-      "pytest": ">=8",
-      "pytest-asyncio": ">=0.23",
-      "respx": ">=0.21",
-      "ruff": ">=0.4",
-      "mypy": ">=1.9"
-    }
-  },
-  "tests": {
-    "count": 9,
-    "files": [
-      "tests/test_agent.py",
-      "tests/test_tools.py",
-      "tests/test_circuit_breaker.py",
-      "tests/test_audit.py",
-      "tests/test_retry.py",
-      "tests/test_pipeline.py",
-      "tests/test_dag.py",
-      "tests/test_sqlite_memory.py",
-      "tests/test_cloud_reporter.py",
-      "tests/conftest.py"
-    ],
+  "agent": {
+    "methods": ["run(prompt, output_type=None, run_id=None)", "stream(prompt)", "resume(run_id, approvals=None, output_type=None)", "resume_stream(run_id, approvals=None, output_type=None)", "add_tool(t)"],
+    "properties": ["audit", "tracer", "memory", "last_result"],
     "config": {
-      "asyncio_mode": "auto",
-      "testpaths": [
-        "tests"
-      ],
-      "provider_mocking": "respx (HTTP level)"
+      "core": ["model", "system_prompt", "max_turns=20", "max_tokens_per_turn=4096", "allowed_tools"],
+      "reliability": ["retry_policy", "circuit_breaker", "audit_enabled=True", "tracer"],
+      "cost": ["max_run_cost_usd", "enforce_budgets=False"],
+      "policy": ["hooks", "approver", "approval_timeout_s=300.0"],
+      "typed": ["output_retries=2"],
+      "context": ["thinking", "effort", "prompt_caching=True", "compaction", "clear_tool_results", "provider_options", "context_budget_tokens=150000", "memory_window=None"],
+      "durable": ["run_store"],
+      "cloud": ["cloud"]
     }
   },
-  "key_patterns": {
-    "tool_definition": "@tool(description='...', idempotent=True) async def fn(arg: type) -> dict",
-    "agent_run": "result = await agent.run(prompt)  # returns AgentResult",
-    "pipeline": "LinearPipeline([(agent, '{input}'), ...]).run(initial)",
-    "dag": "DAGOrchestrator([TaskNode(id, agent, template, depends_on=[...])]).execute(input)",
-    "persistent_memory": "SQLiteMemory('~/.agent-kit/my.db', window=100)",
-    "audit": "AgentConfig(audit_enabled=True) \u2192 result.audit_root_hash"
-  },
-  "server_modules": [
-    {
-      "path": "server/app/main.py",
-      "exports": [
-        "app"
-      ],
-      "purpose": "FastAPI entry point; alert worker when ENABLE_ALERT_WORKER=1"
-    },
-    {
-      "path": "server/app/routers/ingest.py",
-      "exports": [
-        "router"
-      ],
-      "purpose": "POST /v1/events \u2014 all SDK event types, metrics + audit population"
-    },
-    {
-      "path": "server/app/routers/metrics.py",
-      "exports": [
-        "router"
-      ],
-      "purpose": "Fleet dashboard API: /summary /cost /runs /agents /circuit-breaker /active"
-    },
-    {
-      "path": "server/app/routers/alerts.py",
-      "exports": [
-        "router"
-      ],
-      "purpose": "Alert rule + channel CRUD, firing history, ack workflow"
-    },
-    {
-      "path": "server/app/routers/audit.py",
-      "exports": [
-        "router"
-      ],
-      "purpose": "Hosted audit trail retrieval + chain verification"
-    },
-    {
-      "path": "server/app/routers/support.py",
-      "exports": [
-        "router"
-      ],
-      "purpose": "Support context sidebar + SLA definitions (free/pro/enterprise)"
-    },
-    {
-      "path": "server/app/alerting/evaluator.py",
-      "exports": [
-        "evaluate_rules"
-      ],
-      "purpose": "Rule evaluation + immediate fire helpers"
-    },
-    {
-      "path": "server/app/alerting/dispatch.py",
-      "exports": [
-        "dispatch"
-      ],
-      "purpose": "Email / Slack / PagerDuty / webhook notification dispatch"
-    },
-    {
-      "path": "server/app/models.py",
-      "exports": "SQLAlchemy ORM models",
-      "purpose": "Organization, agents, runs, metrics, audit, alert tables"
-    },
-    {
-      "path": "server/app/schemas.py",
-      "exports": "Pydantic request/response models",
-      "purpose": "API surface types"
-    },
-    {
-      "path": "server/app/audit_chain.py",
-      "exports": [
-        "verify_chain"
-      ],
-      "purpose": "Server-side Merkle chain verification"
-    },
-    {
-      "path": "server/app/auth.py",
-      "exports": [
-        "require_api_key"
-      ],
-      "purpose": "API key auth dependency"
-    },
-    {
-      "path": "server/app/database.py",
-      "exports": [
-        "get_session",
-        "engine"
-      ],
-      "purpose": "Async engine + session factory"
-    }
+  "features": [
+    {"name": "hooks-approval-gates", "spec": "specs/11-hooks-approval-gates.md", "modules": ["agent_kit/hooks.py", "agent_kit/agent/loop.py"], "example": "examples/approval_gate.py"},
+    {"name": "mcp-client", "spec": "specs/12-mcp-client.md", "modules": ["agent_kit/tools/mcp.py"], "example": "examples/mcp_tools.py"},
+    {"name": "typed-results", "spec": "specs/13-typed-results.md", "modules": ["agent_kit/output.py"], "example": "examples/typed_output.py"},
+    {"name": "context-management", "spec": "specs/14-context-management.md", "modules": ["agent_kit/memory/budget.py", "agent_kit/memory/window.py", "agent_kit/providers/anthropic.py"], "example": "examples/long_running_agent.py"},
+    {"name": "durable-runs", "spec": "specs/15-durable-runs.md", "modules": ["agent_kit/durable/"], "example": "examples/durable_approval.py"},
+    {"name": "cost-circuit-breaker", "spec": "specs/09-cost-circuit-breaker.md", "modules": ["agent_kit/cloud/budgets.py", "server/app/budgets.py", "server/app/routers/budgets.py"]},
+    {"name": "compliance-exports", "spec": "specs/10-compliance-exports.md", "modules": ["agent_kit/compliance.py", "agent_kit/cli.py", "server/app/compliance/", "server/app/routers/compliance.py"]},
+    {"name": "otlp-ingest", "spec": "specs/08-otlp-ingest.md", "modules": ["server/app/otlp/", "server/app/routers/otlp.py"]},
+    {"name": "harness-adapters", "spec": "specs/07-harness-adapters.md", "modules": ["agent_kit/integrations/"], "example": "examples/claude_agent_sdk_monitored.py"}
   ],
-  "server_tests": {
-    "count": 4,
-    "files": [
-      "server/tests/test_ingest.py",
-      "server/tests/test_metrics.py",
-      "server/tests/test_alerts.py",
-      "server/tests/test_support.py",
-      "server/tests/conftest.py"
-    ],
-    "config": {
-      "asyncio_mode": "auto",
-      "testpaths": [
-        "tests"
-      ],
-      "db": "in-process aiosqlite \u2014 never mocked"
-    }
+  "audit_event_types": ["agent_start", "llm_complete", "tool_call", "agent_complete", "circuit_breaker_state_change", "budget_exceeded", "tool_denied", "llm_call_denied", "tool_output_replaced", "approval_requested", "approval_granted", "approval_denied", "output_validation_failed", "context_trimmed", "context_compacted", "context_edited", "run_suspended", "run_resumed", "tool_interrupted"],
+  "cloud_event_types": ["run_start", "turn_complete", "run_complete", "run_error", "circuit_state_change", "audit_flush"],
+  "exceptions": {
+    "base": "AgentKitError",
+    "loop": ["ProviderError", "CircuitOpenError", "MaxTurnsExceededError", "BudgetExceededError", "RunStoppedByHookError"],
+    "tools": ["ToolNotFoundError", "ToolNotAllowedError", "ToolExecutionError", "MCPConnectionError", "MCPToolError"],
+    "output": ["OutputValidationError"],
+    "durable": ["RunNotFoundError", "RunConflictError", "CheckpointError"],
+    "other": ["AuditVerificationError", "DAGCycleError", "DAGMissingDependencyError"]
   },
-  "server_dependencies": {
-    "core": {
-      "fastapi": ">=0.111",
-      "uvicorn[standard]": ">=0.30",
-      "sqlalchemy[asyncio]": ">=2.0",
-      "asyncpg": ">=0.29",
-      "aiosqlite": ">=0.20",
-      "alembic": ">=1.13",
-      "pydantic": ">=2.5",
-      "httpx": ">=0.27"
-    },
-    "dev": {
-      "pytest": ">=8",
-      "pytest-asyncio": ">=0.23",
-      "httpx": ">=0.27",
-      "ruff": ">=0.4",
-      "mypy": ">=1.9"
-    }
+  "server_routers": {
+    "server/app/routers/ingest.py": "POST /v1/events",
+    "server/app/routers/otlp.py": "POST /v1/traces",
+    "server/app/routers/metrics.py": "GET /v1/metrics/{summary,cost,runs,agents,circuit-breaker,active}",
+    "server/app/routers/audit.py": "GET /v1/audit/runs[/{id}[/verify|/export]], GET /v1/audit/events",
+    "server/app/routers/alerts.py": "/v1/alerts/{channels,rules,firings}",
+    "server/app/routers/support.py": "GET /v1/support/{sla,context}, PATCH /v1/support/tier",
+    "server/app/routers/budgets.py": "/v1/budgets, /v1/budgets/{id}, GET /v1/budgets/status",
+    "server/app/routers/compliance.py": "GET /.well-known/agentkit-signing-keys, /v1/compliance/{export,retention,holds,holds/{id}/release,deletions}"
   },
-  "docs": [
-    "README.md",
-    "CONTRIBUTING.md",
-    "CHANGELOG.md",
-    "examples/README.md",
-    "docs/cloud-quickstart.md",
-    "docs/self-hosting.md",
-    "docs/api-reference.md",
-    "docs/troubleshooting.md"
-  ],
-  "specs": [
-    "specs/00-platform-overview.md",
-    "specs/01-audit-trail.md",
-    "specs/02-fleet-dashboard.md",
-    "specs/03-alerting.md",
-    "specs/04-sla-support.md",
-    "specs/05-dashboard-ui.md"
-  ],
+  "server_route_count": 39,
   "migrations": {
     "tool": "alembic",
     "path": "server/migrations/versions/",
-    "count": 4
+    "count": 7,
+    "versions": {
+      "001_initial_schema": ["organizations", "cloud_event_log", "audit_runs", "audit_events"],
+      "002_metrics_schema": ["agent_metric_snapshots", "active_run_cache", "circuit_breaker_events"],
+      "003_alerting": ["alert_channels", "alert_rules", "alert_firings"],
+      "004_org_tier": ["organizations.tier", "organizations.plan_metadata"],
+      "005_otlp_ingest": ["audit_runs.chain_origin", "active_run_cache.last_event_at", "active_run_cache.failure_message"],
+      "006_budgets": ["budgets"],
+      "007_compliance": ["organizations.audit_retention_days", "signing_keys", "legal_holds", "deletion_receipts"]
+    }
   },
+  "dependencies": {
+    "core": {"anthropic": ">=1.0", "pydantic": ">=2.5", "httpx": ">=0.27"},
+    "optional": {
+      "openai": {"openai": ">=1.40"},
+      "ollama": {},
+      "otel": {"opentelemetry-api": ">=1.24", "opentelemetry-sdk": ">=1.24"},
+      "claude-agent-sdk": {"claude-agent-sdk": ">=0.2"},
+      "openai-agents": {"openai-agents": ">=0.22"},
+      "compliance": {"cryptography": ">=41"},
+      "mcp": {"mcp": ">=2.0"}
+    },
+    "dev": {"pytest": ">=8", "pytest-asyncio": ">=0.23", "respx": ">=0.21", "ruff": ">=0.15,<0.17", "mypy": ">=1.9"}
+  },
+  "server_dependencies": {
+    "core": {"fastapi": ">=0.111", "uvicorn[standard]": ">=0.30", "sqlalchemy[asyncio]": ">=2.0", "asyncpg": ">=0.29", "aiosqlite": ">=0.20", "alembic": ">=1.13", "pydantic": ">=2.5", "httpx": ">=0.27", "opentelemetry-proto": ">=1.24", "cryptography": ">=41"},
+    "dev": {"pytest": ">=8", "pytest-asyncio": ">=0.23", "httpx": ">=0.27", "opentelemetry-sdk": ">=1.24", "opentelemetry-exporter-otlp-proto-common": ">=1.24", "ruff": ">=0.15,<0.17", "mypy": ">=1.9"}
+  },
+  "tests": {
+    "sdk": {
+      "collected": 267,
+      "files": ["test_agent.py", "test_audit.py", "test_budgets.py", "test_circuit_breaker.py", "test_cloud_reporter.py", "test_compliance.py", "test_context_budget.py", "test_dag.py", "test_durable_runs.py", "test_hooks.py", "test_integrations_claude.py", "test_integrations_openai_agents.py", "test_integrations_recorder.py", "test_mcp.py", "test_memory_window.py", "test_output.py", "test_pipeline.py", "test_provider_requests.py", "test_retry.py", "test_run_store.py", "test_sqlite_memory.py", "test_tools.py", "test_typed_results.py"],
+      "fixtures": ["tests/conftest.py (MockProvider)", "tests/fixtures/mcp_fixture_server.py"],
+      "provider_mocking": "fake clients recording request kwargs (respx does not intercept anthropic>=1.0 httpx2)"
+    },
+    "server": {
+      "collected": 160,
+      "files": ["test_alerts.py", "test_audit_chain_append.py", "test_budgets.py", "test_compliance.py", "test_ingest.py", "test_metrics.py", "test_otlp_decode.py", "test_otlp_ingest.py", "test_otlp_normalize.py", "test_support.py"],
+      "helpers": ["server/tests/conftest.py", "server/tests/otlp_helpers.py"],
+      "db": "in-process aiosqlite, never mocked"
+    },
+    "asyncio_mode": "auto"
+  },
+  "examples": ["hello_agent.py", "pipeline_example.py", "multi_tool_agent.py", "research_dag.py", "safe_agent.py", "claude_agent_sdk_monitored.py", "openai_agents_monitored.py", "typed_output.py", "long_running_agent.py", "durable_approval.py", "mcp_tools.py", "approval_gate.py", "cloud_monitored.py"],
+  "docs": ["README.md", "CONTRIBUTING.md", "CHANGELOG.md", "examples/README.md", "docs/cloud-quickstart.md", "docs/self-hosting.md", "docs/api-reference.md", "docs/troubleshooting.md"],
+  "plans": "docs/superpowers/plans/ (10 files, 2026-09-13 to 2026-09-14)",
+  "specs": ["00-platform-overview", "01-audit-trail", "02-fleet-dashboard", "03-alerting", "04-sla-support", "05-dashboard-ui", "06-harness-roadmap", "07-harness-adapters", "08-otlp-ingest", "09-cost-circuit-breaker", "10-compliance-exports", "11-hooks-approval-gates", "12-mcp-client", "13-typed-results", "14-context-management", "15-durable-runs"],
   "ci": {
     "workflow": ".github/workflows/ci.yml",
-    "python_versions": [
-      "3.11",
-      "3.12"
-    ],
-    "sdk": [
-      "ruff check agent_kit tests",
-      "mypy agent_kit",
-      "pytest"
-    ],
-    "server": [
-      "ruff check app tests",
-      "pytest",
-      "alembic upgrade head"
-    ],
-    "examples": "python -m compileall examples/"
+    "python_versions": ["3.11", "3.12"],
+    "sdk": ["ruff check agent_kit tests", "mypy agent_kit", "pytest"],
+    "server": ["ruff check app tests", "pytest", "alembic upgrade head"],
+    "examples": "byte-compile examples/"
   }
 }
