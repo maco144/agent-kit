@@ -63,6 +63,7 @@ class PendingTurn(BaseModel):
     ...                                                      # existing fields
     delegated_cost_usd: dict[str, float] = Field(default_factory=dict)  # call_id → child spend already added to the run
     delegated_tokens: dict[str, int] = Field(default_factory=dict)
+    delegated_root_hash: dict[str, str] = Field(default_factory=dict)  # call_id → completed child's audit root
 
 
 class RunCheckpoint(BaseModel):
@@ -103,7 +104,7 @@ class DelegationContext:
 
 @dataclass(frozen=True)
 class Delegation:
-    run_id: str
+    run_id: str | None                   # None when no child run started (depth limit)
     status: Literal["completed", "suspended", "failed"]
     result: ToolResult | None            # completed or failed
     approvals: list[PendingApproval]     # suspended: child's pending approvals, ids already prefixed
@@ -131,15 +132,18 @@ AgentConfig(..., max_delegation_depth: int = 5)     # read from the top-level ru
 def as_tool(self, name: str, description: str, *, output_type: Any = None) -> AgentTool
 ```
 
-`name` must match `^[A-Za-z0-9_-]{1,64}$`; `description` must be non-empty (`ValueError` otherwise). With
+`name` must match `^[A-Za-z0-9_-]{1,64}$`; `description` must be non-empty (`ValueError` otherwise).
 Called standalone (`await tool(task=...)`), the child runs with its own full config; if it suspends, the
 result is the tool error `delegated agent suspended; run it as a tool inside an agent to resume approvals`. With
 `output_type`, the tool output is the child's `parsed` value as JSON (`model_dump(mode="json")` /
 `TypeAdapter.dump_python(mode="json")`); without it, the child's text output.
 
-`Agent._make_loop()` gains keyword overrides used only by delegation: `memory`, `audit`, `hooks`, `approver`,
-`approval_timeout_s`, `run_store`, `max_run_cost_usd`, `budget_guard`, `reporter`, `delegation_depth`,
-`max_delegation_depth`, `parent_run_id`, `parent_call_id`.
+`Agent.config` exposes the `AgentConfig`. `Agent._make_loop(**overrides)` accepts any `AgentLoop` keyword
+(delegation passes `memory`, `audit`, `hooks`, `approver`, `approval_timeout_s`, `run_store`,
+`max_run_cost_usd`, `budget_guard`, `reporter`, `delegation_depth`, `max_delegation_depth`, `parent_run_id`,
+`parent_call_id`). `Agent._open_delegated(run_id, output_type, **overrides) -> (AgentLoop, RunCheckpoint | None)`
+builds a loop over fresh memory and audit, restored from the run's checkpoint when one exists that is not
+completed. `AgentLoop.spend() -> (cost_usd, tokens)` reports a run's spend so far, including a run that raised.
 
 ### `agent_kit/cloud/reporter.py`
 
@@ -203,7 +207,9 @@ Without a run store there is nothing to load; the child starts fresh.
 
 When `delegate()` returns (any status), the parent adds
 `delta = delegation.cost_usd - pending.delegated_cost_usd.get(call_id, 0.0)` to `_run_cost_usd`, records the
-new cumulative value in `pending.delegated_cost_usd[call_id]` (tokens likewise). The next
+new cumulative value in `pending.delegated_cost_usd[call_id]` (tokens likewise; a completed child's root hash
+goes to `pending.delegated_root_hash[call_id]`). Delegations that started no run (`run_id is None`) record
+nothing. The next
 `_enforce_budgets()` sees the child's spend against the run cap. Fleet spend is recorded by the child loop
 under the child's reporter (`agent_name` / `project`), matching how the server attributes the child run; the
 parent does not record it again.
