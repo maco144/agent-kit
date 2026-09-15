@@ -1,5 +1,8 @@
 # agent-kit
 
+[![PyPI](https://img.shields.io/pypi/v/agent-kit-ai)](https://pypi.org/project/agent-kit-ai/)
+[![Python](https://img.shields.io/pypi/pyversions/agent-kit-ai)](https://pypi.org/project/agent-kit-ai/)
+
 **Production-ready framework for building AI agents. Type-safe. Observable. Circuit-broken.**
 
 ```bash
