@@ -19,6 +19,7 @@ python examples/hello_agent.py
 | [`openai_agents_monitored.py`](openai_agents_monitored.py) | 33 | An OpenAI Agents SDK run reported to agent-kit Cloud through a trace processor. | `pip install agent-kit[openai-agents]`; `OPENAI_API_KEY`; `AGENTKIT_API_KEY` |
 | [`typed_output.py`](typed_output.py) | 47 | Typed results — an agent looks up prices with a tool and returns a validated `Quote` model. | API key |
 | [`long_running_agent.py`](long_running_agent.py) | 42 | Context management — prompt caching, effort, server-side compaction and tool-result clearing on a 25-section handbook audit. | API key |
+| [`durable_approval.py`](durable_approval.py) | 47 | Durable runs — a refund suspends for human approval (`start`), and a separate invocation approves and completes it (`approve <call_id>`). | API key |
 | [`mcp_tools.py`](mcp_tools.py) | 39 | The official filesystem MCP server's tools inside an agent, with approval required for anything not marked read-only. | API key; Node.js; `pip install agent-kit[mcp]` |
 | [`approval_gate.py`](approval_gate.py) | 72 | Hooks and approval gates — a terminal approver for refunds, card numbers redacted from tool output, and account closure stopping the run. | API key |
 | [`cloud_monitored.py`](cloud_monitored.py) | 148 | Full fleet observability — `CloudReporter` shipping lifecycle events to agent-kit Cloud, plus circuit breaker config and per-run cost attribution. Runs locally with cloud reporting off when `AGENTKIT_API_KEY` is unset. | API key; cloud optional |

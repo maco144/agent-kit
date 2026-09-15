@@ -10,7 +10,8 @@ agent-kit/
 │   ├── agent/              # Core agent primitives
 │   │   ├── agent.py        # Agent + AgentConfig
 │   │   └── loop.py         # AgentLoop (turn execution engine)
-│   ├── hooks.py            # Hooks, Decision, approval requests, policy helpers
+│   ├── durable/            # Durable runs: RunCheckpoint, RunStore, SQLiteRunStore, Checkpointer
+│   ├── hooks.py            # Hooks, Decision, approval requests, SUSPEND, policy helpers
 │   ├── output.py           # OutputSpec — typed run outputs (strict schemas, parsing)
 │   ├── compliance.py       # verify_bundle / load_public_keys (offline evidence verification)
 │   ├── cli.py              # `agent-kit verify`
@@ -244,6 +245,7 @@ Managed by Alembic (`server/migrations/versions/`):
 | `specs/03-alerting.md` | Alerting rules, channels, evaluator (spec implemented) |
 | `specs/04-sla-support.md` | SLA-backed support context API (spec implemented) |
 | `specs/05-dashboard-ui.md` | Dashboard UI design spec |
+| `specs/15-durable-runs.md` | Checkpoints, suspend/resume approvals, crash recovery, CAS run store (implemented) |
 | `specs/14-context-management.md` | Native content round-trip, caching, reasoning, compaction, token budget (implemented) |
 | `specs/13-typed-results.md` | Typed results: output_type → AgentResult[T] via native structured outputs (implemented) |
 | `specs/12-mcp-client.md` | MCP client: MCPToolset over stdio / streamable HTTP (implemented) |
@@ -277,6 +279,8 @@ Managed by Alembic (`server/migrations/versions/`):
 | `test_output.py` | OutputSpec strict schema transform, root wrapping, parsing and error formatting |
 | `test_typed_results.py` | Typed runs: native vs prompt mode, repair turns, streaming, tools, audit |
 | `test_mcp.py` | MCPToolset against a real fixture MCP server over stdio and streamable HTTP |
+| `test_run_store.py` | SQLiteRunStore CAS writes, mark_tool_started, list/delete, Checkpointer |
+| `test_durable_runs.py` | Suspend/resume approvals, crash recovery, concurrent resume, typed + streaming resume |
 | `test_hooks.py` | Hook decisions, approvals (grant/deny/timeout/error), output replacement, stop_run, audit events |
 | `test_integrations_recorder.py` | RunRecorder lifecycle, deferred run_start, cost reconciliation, chain integrity |
 | `test_integrations_claude.py` | Claude Agent SDK adapter (fakes + real SDK types) |

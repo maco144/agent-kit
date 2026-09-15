@@ -484,6 +484,42 @@ audit event (`tool_denied`, `approval_requested`, `approval_granted`, `approval_
 
 ---
 
+## Durable runs
+
+Give an agent a run store and every run checkpoints at each turn boundary. Runs survive crashes and deploys,
+and approvals can wait for a human for as long as it takes:
+
+```python
+from agent_kit import SUSPEND
+from agent_kit.durable import SQLiteRunStore
+
+agent = Agent(provider, tools=[refund], config=AgentConfig(
+    run_store=SQLiteRunStore("runs.db"),
+    hooks=Hooks(before_tool=[require_approval("refund")]),
+    approver=SUSPEND,                                  # park the run instead of waiting inline
+))
+result = await agent.run("Refund order A-1001", run_id="ticket-9913")
+result.status               # "suspended"
+result.pending_approvals    # [PendingApproval(call_id=..., tool_name="refund", arguments={...})]
+
+# hours later, in any process that builds the same Agent:
+result = await agent.resume("ticket-9913", approvals={call_id: True})
+```
+
+- **Crash recovery.** `agent.resume(run_id)` continues a run that crashed, failed, or was killed, from its
+  last checkpoint. A tool that was running when the process died is re-run only if it is marked
+  `idempotent=True`; otherwise the model is told the call was interrupted, so a refund never runs twice.
+- **One owner at a time.** Checkpoint writes are compare-and-swap: if two workers resume the same run, one
+  gets `RunConflictError` before it can execute anything.
+- **Continuity.** Memory, turns, run cost, typed-output state, and the audit chain are restored — the chain
+  verifies across the suspension (`run_suspended`, `run_resumed`, `tool_interrupted` events).
+- `resume_stream()` streams a resumed run; resuming a completed run returns its stored result.
+
+`RunStore` is a small async protocol (`save` / `load` / `mark_tool_started` / `list` / `delete`), so Postgres
+or Redis stores drop in. Full example: [`examples/durable_approval.py`](examples/durable_approval.py).
+
+---
+
 ## MCP tools
 
 Use tools from any [Model Context Protocol](https://modelcontextprotocol.io) server — `pip install agent-kit[mcp]`:
