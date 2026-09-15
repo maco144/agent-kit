@@ -77,6 +77,15 @@ class AuditChain:
         self._current_root = leaf_hash
         return record
 
+    @classmethod
+    def restore(cls, events: list[AuditEventRecord]) -> AuditChain:
+        """Rebuild a chain from recorded events (e.g. a run checkpoint) and verify it."""
+        chain = cls()
+        chain._events = list(events)
+        chain._current_root = events[-1].leaf_hash if events else _GENESIS_ROOT
+        chain.verify()
+        return chain
+
     def root_hash(self) -> str:
         """Current root hash — changes with every new event."""
         return self._current_root

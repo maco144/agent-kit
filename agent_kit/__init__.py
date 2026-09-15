@@ -15,6 +15,7 @@ Quick start::
 """
 
 from agent_kit.agent.agent import Agent, AgentConfig
+from agent_kit.hooks import SUSPEND
 from agent_kit.tools.base import Tool, tool
 from agent_kit.types import AgentResult, ClearToolResults, Compaction, Message, ToolResult, Turn
 
@@ -25,6 +26,7 @@ __all__ = [
     # Core primitives
     "Agent",
     "AgentConfig",
+    "SUSPEND",
     "Compaction",
     "ClearToolResults",
     "Tool",

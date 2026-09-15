@@ -67,3 +67,24 @@ def test_audit_chain_events_returns_copy():
     events_copy = chain.events()
     events_copy.clear()
     assert len(chain) == 1  # original unaffected
+
+
+def test_restore_continues_the_chain():
+    chain = AuditChain()
+    chain.append("a", actor="x", payload={"n": 1})
+    chain.append("b", actor="x")
+    restored = AuditChain.restore(chain.events())
+    assert restored.root_hash() == chain.root_hash()
+    restored.append("c", actor="x")
+    assert restored.verify()
+    assert AuditChain.restore([]).root_hash() == AuditChain().root_hash()
+
+
+def test_restore_rejects_a_tampered_chain():
+    chain = AuditChain()
+    chain.append("a", actor="x")
+    chain.append("b", actor="x")
+    events = chain.events()
+    events[0] = events[0].model_copy(update={"event_type": "forged"})
+    with pytest.raises(AuditVerificationError):
+        AuditChain.restore(events)

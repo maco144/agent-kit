@@ -129,3 +129,33 @@ class OutputValidationError(AgentKitError):
         self.errors = errors
         self.raw_output = raw_output
         self.attempts = attempts
+
+
+class RunNotFoundError(AgentKitError):
+    """No checkpoint exists for the run id."""
+
+    def __init__(self, run_id: str) -> None:
+        super().__init__(f"No checkpoint for run '{run_id}'.")
+        self.run_id = run_id
+
+
+class RunConflictError(AgentKitError):
+    """A run checkpoint changed underneath this writer (another worker owns the run)."""
+
+    def __init__(self, run_id: str, expected_version: int, actual_version: int | None) -> None:
+        super().__init__(
+            f"Run '{run_id}' changed concurrently "
+            f"(expected version {expected_version}, found {actual_version})."
+        )
+        self.run_id = run_id
+        self.expected_version = expected_version
+        self.actual_version = actual_version
+
+
+class CheckpointError(AgentKitError):
+    """A checkpoint exists but cannot be resumed."""
+
+    def __init__(self, run_id: str, reason: str) -> None:
+        super().__init__(f"Checkpoint for run '{run_id}' cannot be resumed: {reason}")
+        self.run_id = run_id
+        self.reason = reason

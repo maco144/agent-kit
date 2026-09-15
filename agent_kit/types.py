@@ -106,6 +106,16 @@ class Turn(BaseModel):
 T = TypeVar("T")
 
 
+class PendingApproval(BaseModel):
+    """A tool call waiting for a human decision in a suspended run."""
+
+    call_id: str
+    tool_name: str
+    arguments: dict[str, Any]
+    reason: str | None = None
+    turn: int
+
+
 class AgentResult(BaseModel, Generic[T]):
     """Final result returned by Agent.run(). ``parsed`` holds the validated output_type value."""
 
@@ -117,6 +127,9 @@ class AgentResult(BaseModel, Generic[T]):
     audit_root_hash: str | None = None
     trace_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    run_id: str | None = None
+    status: Literal["completed", "suspended"] = "completed"
+    pending_approvals: list[PendingApproval] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

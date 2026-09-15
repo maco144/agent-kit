@@ -23,7 +23,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 DecisionKind = Literal["allow", "deny", "ask", "replace"]
 
@@ -95,6 +95,16 @@ BeforeToolHook = Callable[[ToolCallContext], HookResult | Awaitable[HookResult]]
 AfterToolHook = Callable[[ToolResultContext], HookResult | Awaitable[HookResult]]
 BeforeLLMHook = Callable[[LLMCallContext], HookResult | Awaitable[HookResult]]
 Approver = Callable[[ApprovalRequest], Awaitable[bool]]
+
+
+class Suspend:
+    """Approver sentinel: suspend the run until the approval is answered via Agent.resume()."""
+
+    def __repr__(self) -> str:
+        return "SUSPEND"
+
+
+SUSPEND: Final = Suspend()
 
 
 @dataclass

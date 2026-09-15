@@ -310,3 +310,13 @@ async def test_run_sets_last_result(mock_provider):
     agent = Agent(mock_provider)
     result = await agent.run("hi")
     assert agent.last_result is result
+
+
+async def test_result_totals_cover_only_this_run(mock_provider):
+    agent = Agent(mock_provider)
+    first = await agent.run("one")
+    second = await agent.run("two")
+    assert second.total_cost_usd == pytest.approx(first.total_cost_usd)
+    assert second.total_tokens == first.total_tokens == 15
+    assert second.run_id and second.run_id != first.run_id
+    assert (second.status, second.pending_approvals) == ("completed", [])

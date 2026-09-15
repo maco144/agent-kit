@@ -384,21 +384,22 @@ class AgentLoop:
                     actor=run_id,
                     payload={
                         "turns": turn_count,
-                        "total_tokens": self._tracer.cumulative_tokens(),
-                        "total_cost_usd": self._tracer.cumulative_cost_usd(),
+                        "total_tokens": self._totals()[1],
+                        "total_cost_usd": self._totals()[0],
                         "output_type": spec.name if spec else None,
                     },
                 )
 
             root_span.set_attribute("total_turns", turn_count)
-            root_span.set_attribute("total_cost_usd", self._tracer.cumulative_cost_usd())
+            root_span.set_attribute("total_cost_usd", self._totals()[0])
 
         result: AgentResult[Any] = AgentResult(
             output=final_output,
             parsed=parsed,
             turns=self._turns,
-            total_cost_usd=self._tracer.cumulative_cost_usd(),
-            total_tokens=self._tracer.cumulative_tokens(),
+            total_cost_usd=self._totals()[0],
+            total_tokens=self._totals()[1],
+            run_id=run_id,
             audit_root_hash=self._audit.root_hash() if self._audit else None,
             trace_id=self._tracer.trace_id,
         )
@@ -413,6 +414,10 @@ class AgentLoop:
                 )
 
         self.result = result
+
+    def _totals(self) -> tuple[float, int]:
+        """Cost and tokens of this run's turns (the tracer's totals span every run on the agent)."""
+        return sum(t.cost.cost_usd for t in self._turns), sum(t.cost.total_tokens for t in self._turns)
 
     def _trim_context(self, turn: int, system: str, tools: list[ToolSchema]) -> None:
         """Cut history once to half the token budget when the next request would exceed it."""
