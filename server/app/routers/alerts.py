@@ -27,7 +27,17 @@ router = APIRouter(prefix="/v1/alerts", tags=["alerts"])
 _VALID_CHANNEL_TYPES = {"email", "slack", "pagerduty", "webhook"}
 _VALID_RULE_TYPES = {
     "circuit_breaker_open", "cost_anomaly", "error_rate", "audit_integrity_failure", "budget_exceeded",
+    "tool_output_flagged",
 }
+_VALID_SEVERITIES = ("low", "medium", "high", "critical")
+
+
+def _validate_rule_config(rule_type: str, config: dict) -> None:
+    if rule_type == "tool_output_flagged" and config.get("min_severity", "high") not in _VALID_SEVERITIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"min_severity must be one of: {list(_VALID_SEVERITIES)}",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +155,7 @@ async def create_rule(
             status_code=400,
             detail=f"Invalid rule type. Must be one of: {sorted(_VALID_RULE_TYPES)}",
         )
+    _validate_rule_config(body.type, body.config)
 
     # Verify referenced channels exist
     for ch_id in body.channel_ids:
@@ -187,6 +198,7 @@ async def update_rule(
     if body.name is not None:
         rule.name = body.name
     if body.config is not None:
+        _validate_rule_config(rule.type, body.config)
         rule.config = body.config
     if body.enabled is not None:
         rule.enabled = body.enabled

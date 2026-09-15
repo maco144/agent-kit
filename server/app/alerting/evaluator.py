@@ -12,6 +12,9 @@ from app.models import AgentMetricSnapshot, AlertFiring, AlertRule
 
 logger = logging.getLogger("agentkit.cloud.alerts")
 
+# Mirrors agent_kit.types.SEVERITY_ORDER (the server does not import the SDK)
+SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
 
 # ---------------------------------------------------------------------------
 # Background worker entry point
@@ -110,6 +113,50 @@ async def fire_audit_integrity_failure(
         if not _matches_wildcard(cfg.get("project", "*"), project):
             continue
         ctx = {"run_id": run_id, "agent_name": agent_name, "project": project}
+        await _create_firing(rule, ctx, db)
+
+
+async def fire_tool_output_flagged(
+    org_id: str,
+    agent_name: str,
+    project: str,
+    run_id: str,
+    payload: dict,
+    db: AsyncSession,
+) -> None:
+    """Trigger tool_output_flagged alerts when a scanner flags tool output at or above a rule's min_severity."""
+    level = SEVERITY_ORDER.get(str(payload.get("max_severity", "")))
+    if level is None:
+        return
+    now = datetime.utcnow()
+    result = await db.execute(
+        select(AlertRule).where(
+            AlertRule.org_id == org_id,
+            AlertRule.type == "tool_output_flagged",
+            AlertRule.enabled == True,  # noqa: E712
+        )
+    )
+    findings = [f for f in payload.get("findings") or [] if isinstance(f, dict)]
+    for rule in result.scalars().all():
+        if rule.muted_until and rule.muted_until > now:
+            continue
+        cfg = rule.config
+        if not _matches_wildcard(cfg.get("agent_name", "*"), agent_name):
+            continue
+        if not _matches_wildcard(cfg.get("project", "*"), project):
+            continue
+        if level < SEVERITY_ORDER.get(cfg.get("min_severity", "high"), SEVERITY_ORDER["high"]):
+            continue
+        ctx = {
+            "run_id": run_id,
+            "agent_name": agent_name,
+            "project": project,
+            "tool_name": payload.get("tool_name", ""),
+            "action": payload.get("action", ""),
+            "max_severity": payload.get("max_severity"),
+            "rules": sorted({str(f["rule"]) for f in findings if f.get("rule")}),
+            "indicators": sorted({str(f["indicator"]) for f in findings if f.get("indicator")}),
+        }
         await _create_firing(rule, ctx, db)
 
 
@@ -230,8 +277,8 @@ async def _create_firing(
 async def _resolve_firing(
     rule: AlertRule, firing: AlertFiring, db: AsyncSession
 ) -> None:
-    """Mark a firing as resolved. audit_integrity_failure never auto-resolves."""
-    if rule.type == "audit_integrity_failure":
+    """Mark a firing as resolved. audit_integrity_failure and tool_output_flagged never auto-resolve."""
+    if rule.type in ("audit_integrity_failure", "tool_output_flagged"):
         return
 
     from app.alerting.dispatch import dispatch_alert

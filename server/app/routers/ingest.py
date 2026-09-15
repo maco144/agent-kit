@@ -134,6 +134,8 @@ async def _process_event(raw: dict, org_id: str, db: AsyncSession) -> None:
         await _handle_run_error(raw, org_id, occurred_at, db)
     elif event_type == "circuit_state_change":
         await _handle_circuit_state_change(raw, org_id, occurred_at, db)
+    elif event_type == "tool_output_flagged":
+        await _handle_tool_output_flagged(raw, org_id, db)
 
 
 async def _handle_run_start(raw: dict, org_id: str, db: AsyncSession) -> None:
@@ -176,6 +178,24 @@ async def _handle_run_start(raw: dict, org_id: str, db: AsyncSession) -> None:
             started_at=started_at,
             prompt_hash=payload.get("prompt_hash") or "",
         ))
+
+
+async def _handle_tool_output_flagged(raw: dict, org_id: str, db: AsyncSession) -> None:
+    """Scanner findings from the SDK: the raw event is already logged; evaluate tool_output_flagged rules."""
+    try:
+        from app.alerting.evaluator import fire_tool_output_flagged
+
+        await fire_tool_output_flagged(
+            org_id=org_id,
+            agent_name=raw.get("agent_name", ""),
+            project=raw.get("project", "default"),
+            run_id=raw.get("run_id", ""),
+            payload=raw.get("payload", {}),
+            db=db,
+        )
+    except Exception as exc:
+        import logging
+        logging.getLogger("agentkit.cloud.ingest").debug("Alert trigger failed for tool_output_flagged: %s", exc)
 
 
 async def _handle_run_complete(
