@@ -6,6 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 ## [Unreleased]
 
 ### Added
+- **Context management.** Anthropic prompt caching is on by default (system-prompt breakpoint + automatic conversation caching; `AgentConfig(prompt_caching=False)` opts out). `AgentConfig(thinking=..., effort=...)` set Anthropic thinking and `output_config.effort` (OpenAI/Ollama `reasoning_effort`); `provider_options={...}` is merged into every request. Opt-in server-side context management: `Compaction(...)` (summarisation, beta `compact-2026-01-12`) and `ClearToolResults(...)` (beta `context-management-2025-06-27`), with compaction cost counted across `usage.iterations` and audit events `context_compacted` / `context_edited`. History is trimmed by tokens: `context_budget_tokens` (default 150K) cuts the oldest turns once to half the budget at a tool-safe boundary, keeping the prompt prefix stable between cuts; audited as `context_trimmed`. `Message.native_content` preserves provider blocks; `SQLiteMemory` persists them. Stores gain `trim_oldest()`. Example `examples/long_running_agent.py`. See `specs/14-context-management.md`.
 - **Typed results.** `await agent.run(prompt, output_type=Model)` returns `AgentResult[Model]` with a validated `.parsed` — any type Pydantic validates (models, dataclasses, `TypedDict`, lists, enums, unions). Anthropic (`output_config.format`) and OpenAI / Ollama (`response_format`) constrain the answer natively; other providers, schemas strict mode can't express (open dicts, recursion), and Ollama runs with tools get the schema in the system prompt. Invalid answers are sent back with the validation errors up to `AgentConfig(output_retries=2)` times, then `OutputValidationError` is raised; failures are audited as `output_validation_failed`. Providers accept `output_schema` and declare `supports_structured_output`. Example `examples/typed_output.py`. See `specs/13-typed-results.md`.
 - **MCP tools.** `async with MCPToolset(stdio(...), http(...)) as mcp:` connects Model Context Protocol servers over stdio or streamable HTTP and exposes their tools as ordinary agent-kit tools (`server__tool`), so allowlists, hooks, approvals, budgets, and audit apply. `require_approval_unless_read_only(mcp)` gates tools not marked read-only. New extra `agent-kit[mcp]` (`mcp>=2.0`); example `examples/mcp_tools.py`. See `specs/12-mcp-client.md`.
 - **Hooks and approval gates.** `AgentConfig(hooks=Hooks(before_tool=[...], after_tool=[...], before_llm=[...]), approver=..., approval_timeout_s=...)`. Hooks return allow / deny / ask / replace: deny tools (the model sees a tool error, or `stop_run=True` raises `RunStoppedByHookError`), require human approval through an async approver with a timeout, redact or block tool output before it reaches memory or the model, and stop runs before a model call. Fail-closed throughout; every decision is audited. Helpers `require_approval`, `deny_tools`, `allow_only`; example `examples/approval_gate.py`. See `specs/11-hooks-approval-gates.md`.
@@ -16,9 +17,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 - `CloudReporter.submit_threadsafe(event)` for synchronous callers on any thread, plus `CloudReporter.project` / `agent_name`.
 
 ### Changed
+- `AgentConfig.memory_window`, `InMemoryStore(window=)`, and `SQLiteMemory(window=)` default to `None` (no message cap); agents trim by `context_budget_tokens` instead. Pass a window explicitly to keep a message cap.
+- Anthropic agent runs send the system prompt as a cached text block plus top-level `cache_control`.
 - Minimum versions: `anthropic>=1.0`, `openai>=1.40` (structured output parameters).
 
 ### Fixed
+- Anthropic thinking blocks were dropped from conversation history, which breaks tool-using turns on models that think (Claude Opus 5 and Sonnet 5 do by default); assistant turns now round-trip every content block verbatim.
+- The 50-message memory window rewrote the start of the history on every turn once exceeded, so prompt caching missed from then on (and replayed thinking blocks fail the Claude Fable 5.1 conversation check).
 - A tool that returned `None` was reported to the model as `Error: None`; it is now sent as `null`, and only real tool errors are marked as errors.
 
 ## [0.3.0] — 2026-09-13

@@ -38,6 +38,7 @@ agent-kit/
 │   ├── memory/             # Conversation memory backends
 │   │   ├── in_memory.py    # InMemoryStore (default, windowed)
 │   │   ├── sqlite.py       # SQLiteMemory (persistent, thread-safe)
+│   │   ├── budget.py       # Token-budget trim planning (prompt size estimates)
 │   │   └── window.py       # window_indices — trimming that keeps tool exchanges intact
 │   ├── reliability/        # Resilience primitives
 │   │   ├── retry.py        # RetryPolicy (exponential backoff)
@@ -243,6 +244,7 @@ Managed by Alembic (`server/migrations/versions/`):
 | `specs/03-alerting.md` | Alerting rules, channels, evaluator (spec implemented) |
 | `specs/04-sla-support.md` | SLA-backed support context API (spec implemented) |
 | `specs/05-dashboard-ui.md` | Dashboard UI design spec |
+| `specs/14-context-management.md` | Native content round-trip, caching, reasoning, compaction, token budget (implemented) |
 | `specs/13-typed-results.md` | Typed results: output_type → AgentResult[T] via native structured outputs (implemented) |
 | `specs/12-mcp-client.md` | MCP client: MCPToolset over stdio / streamable HTTP (implemented) |
 | `specs/11-hooks-approval-gates.md` | before_tool / after_tool / before_llm hooks with approvals (implemented) |
@@ -268,7 +270,8 @@ Managed by Alembic (`server/migrations/versions/`):
 | `test_sqlite_memory.py` | SQLiteMemory persistence |
 | `test_cloud_reporter.py` | CloudReporter batching + HTTP shipping |
 | `test_provider_requests.py` | Exact Anthropic/OpenAI request payloads via fake clients; pricing; streaming |
-| `test_memory_window.py` | Tool-safe memory trimming, SQLite tool_calls persistence + migration |
+| `test_memory_window.py` | Tool-safe memory trimming, `trim_oldest`, SQLite tool_calls persistence + migration |
+| `test_context_budget.py` | Token budget planning and loop trimming, request options, context event audit |
 | `test_budgets.py` | Per-run caps, BudgetGuard caching / local spend / fail-open, fleet enforcement |
 | `test_compliance.py` | Offline bundle verification (tampering, wrong keys, receipts) and CLI exit codes |
 | `test_output.py` | OutputSpec strict schema transform, root wrapping, parsing and error formatting |

@@ -411,6 +411,37 @@ Full example: [`examples/typed_output.py`](examples/typed_output.py).
 
 ---
 
+## Context management
+
+Long tool-heavy runs stay correct, cached, and inside the context window with no configuration:
+
+- **Prompt caching is on.** Anthropic requests carry a breakpoint on the system prompt plus automatic
+  caching of the growing conversation; cached input shows up in `turn.cost.cache_read_tokens`.
+  `AgentConfig(prompt_caching=False)` turns it off.
+- **Thinking and compaction blocks round-trip verbatim.** Claude models that think (Claude Opus 5 and
+  Sonnet 5 do by default) get every thinking block back unchanged, including through `SQLiteMemory`.
+- **History is trimmed by tokens, not message count.** When the next request would exceed
+  `context_budget_tokens` (default 150K), the oldest turns are cut once down to half the budget, never
+  separating a tool call from its result. Between cuts the history only grows at the end, so the prompt
+  prefix — and the cache — stays valid. Each cut is audited as `context_trimmed`.
+
+```python
+config = AgentConfig(
+    effort="high",                    # Anthropic output_config.effort / OpenAI reasoning_effort
+    thinking="adaptive",              # Anthropic thinking
+    provider_options={"thinking": {"display": "summarized"}},   # merged into every request
+    compaction=Compaction(trigger_tokens=100_000),              # Anthropic server-side summarisation
+    clear_tool_results=ClearToolResults(trigger_tokens=60_000, keep=4),
+)
+```
+
+With `compaction`, the API summarises earlier context itself: client trimming stops, compaction cost is
+included in `total_cost_usd`, and each summarisation is audited as `context_compacted` (tool-result
+clearing as `context_edited`). `memory_window=N` still caps history by message count if you want it.
+Full example: [`examples/long_running_agent.py`](examples/long_running_agent.py).
+
+---
+
 ## Hooks and approval gates
 
 Put policy around what an agent does — deny tools, require a human, redact what tools return, or stop the run:

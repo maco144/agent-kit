@@ -17,7 +17,7 @@ working plan to close that gap, in order.
 | MCP client | ✅ (2.1) | ✅ | ✅ |
 | Typed / structured output | ✅ (2.2) | ✅ | ✅ |
 | Approval gates / hooks | ✅ (2.3) | ✅ | ✅ |
-| Context management | Message-count window | ✅ | Partial |
+| Context management | ✅ (2.4) | ✅ | Partial |
 | Durable runs / resume | ❌ | Sessions | ✅ |
 | Sub-agents / handoffs | Static DAG | ✅ | ✅ |
 | Streaming with tools | ✅ (Tier 1) | ✅ | ✅ |
@@ -59,7 +59,7 @@ Implementation plan: `docs/superpowers/plans/2026-09-13-tier1-harness-fundamenta
       instance via provider structured outputs; fall back to schema-in-prompt + validation.
 - [x] **2.3 Hooks + approval gates** — design: `specs/11-hooks-approval-gates.md`. `before_tool` / `after_tool` / `before_llm` hooks returning
       allow / deny / ask; `ask` pauses the run for an external decision. Extends `ToolRegistry`.
-- [ ] **2.4 Context management** — prompt-caching breakpoints, compaction/context-editing passthrough,
+- [x] **2.4 Context management** — design: `specs/14-context-management.md`. prompt-caching breakpoints, compaction/context-editing passthrough,
       thinking and effort settings on `AgentConfig`, token-based windowing.
 - [ ] **2.5 Durable runs** — checkpoint loop state per `run_id` (SQLite); `agent.resume(run_id)`.
 - [ ] **2.6 Agent-as-tool** — expose an `Agent` as a `Tool` for delegation; DAG stays for static graphs.
