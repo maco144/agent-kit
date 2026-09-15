@@ -6,8 +6,12 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Literal, TypeVar, overload
 
 from agent_kit.agent.loop import AgentLoop
 from agent_kit.audit.chain import AuditChain
+from agent_kit.durable import CHECKPOINT_SCHEMA_VERSION, RunCheckpoint, RunStore
+from agent_kit.exceptions import AuditVerificationError, CheckpointError, RunNotFoundError
+from agent_kit.hooks import SUSPEND, Suspend
 from agent_kit.memory.in_memory import InMemoryStore
 from agent_kit.observability.tracer import AgentTracer
+from agent_kit.output import OutputSpec
 from agent_kit.providers.base import BaseProvider
 from agent_kit.tools.base import Tool
 from agent_kit.tools.registry import ToolRegistry
@@ -51,7 +55,7 @@ class AgentConfig:
         max_run_cost_usd: float | None = None,
         enforce_budgets: bool = False,
         hooks: Hooks | None = None,
-        approver: Approver | None = None,
+        approver: Approver | Suspend | None = None,
         approval_timeout_s: float = 300.0,
         output_retries: int = 2,
         thinking: Literal["adaptive", "disabled"] | None = None,
@@ -61,6 +65,7 @@ class AgentConfig:
         clear_tool_results: ClearToolResults | None = None,
         provider_options: dict[str, Any] | None = None,
         context_budget_tokens: int | None = 150_000,
+        run_store: RunStore | None = None,
     ) -> None:
         self.model = model
         self.system_prompt = system_prompt
@@ -76,7 +81,7 @@ class AgentConfig:
         self.max_run_cost_usd = max_run_cost_usd  # per-run hard cap, enforced before each model call
         self.enforce_budgets = enforce_budgets  # fleet budgets from agent-kit Cloud (requires cloud)
         self.hooks = hooks  # before_tool / after_tool / before_llm policy hooks
-        self.approver = approver  # awaited when a before_tool hook asks for approval
+        self.approver = approver  # awaited when a before_tool hook asks; SUSPEND parks the run instead
         self.approval_timeout_s = approval_timeout_s  # no answer in time → deny
         self.output_retries = output_retries  # repair turns after an invalid typed answer
         self.thinking = thinking  # Anthropic thinking type
@@ -86,6 +91,7 @@ class AgentConfig:
         self.clear_tool_results = clear_tool_results  # Anthropic server-side tool-result clearing
         self.provider_options = provider_options or {}  # merged into every provider request
         self.context_budget_tokens = context_budget_tokens  # over budget → cut history once to half
+        self.run_store = run_store  # checkpoints: resume after crashes, suspend for approvals
 
 
 class Agent:
@@ -135,6 +141,8 @@ class Agent:
         self._config = config or AgentConfig()
         if self._config.enforce_budgets and self._config.cloud is None:
             raise ValueError("enforce_budgets=True requires AgentConfig(cloud=CloudReporter(...))")
+        if self._config.approver is SUSPEND and self._config.run_store is None:
+            raise ValueError("approver=SUSPEND requires AgentConfig(run_store=...)")
         self._memory = memory or InMemoryStore(window=self._config.memory_window)
         self._registry = ToolRegistry(
             tools=tools or [],
@@ -150,12 +158,18 @@ class Agent:
         return self
 
     @overload
-    async def run(self, prompt: str, *, output_type: type[T], **context: Any) -> AgentResult[T]: ...
+    async def run(
+        self, prompt: str, *, output_type: type[T], run_id: str | None = None, **context: Any
+    ) -> AgentResult[T]: ...
 
     @overload
-    async def run(self, prompt: str, *, output_type: None = None, **context: Any) -> AgentResult[Any]: ...
+    async def run(
+        self, prompt: str, *, output_type: None = None, run_id: str | None = None, **context: Any
+    ) -> AgentResult[Any]: ...
 
-    async def run(self, prompt: str, *, output_type: Any = None, **context: Any) -> AgentResult[Any]:
+    async def run(
+        self, prompt: str, *, output_type: Any = None, run_id: str | None = None, **context: Any
+    ) -> AgentResult[Any]:
         """
         Run the agent on a prompt and return the final result.
 
@@ -170,10 +184,12 @@ class Agent:
             ProviderError: if the LLM call fails and retries are exhausted
             OutputValidationError: if a typed answer never validates
         """
-        self.last_result = await self._make_loop().run(prompt, output_type=output_type, **context)
+        self.last_result = await self._make_loop().run(prompt, output_type=output_type, run_id=run_id, **context)
         return self.last_result
 
-    async def stream(self, prompt: str, *, output_type: Any = None, **context: Any) -> AsyncIterator[str]:
+    async def stream(
+        self, prompt: str, *, output_type: Any = None, run_id: str | None = None, **context: Any
+    ) -> AsyncIterator[str]:
         """
         Stream the agent's response as text chunks.
 
@@ -187,9 +203,90 @@ class Agent:
         a repair); ``agent.last_result.parsed`` holds the validated value.
         """
         loop = self._make_loop()
-        async for chunk in loop.stream(prompt, output_type=output_type, **context):
+        async for chunk in loop.stream(prompt, output_type=output_type, run_id=run_id, **context):
             yield chunk
         self.last_result = loop.result
+
+    @overload
+    async def resume(
+        self, run_id: str, *, approvals: dict[str, bool] | None = None, output_type: type[T]
+    ) -> AgentResult[T]: ...
+
+    @overload
+    async def resume(
+        self, run_id: str, *, approvals: dict[str, bool] | None = None, output_type: None = None
+    ) -> AgentResult[Any]: ...
+
+    async def resume(
+        self, run_id: str, *, approvals: dict[str, bool] | None = None, output_type: Any = None
+    ) -> AgentResult[Any]:
+        """
+        Continue a checkpointed run — after a crash, a failure, or a suspension for approval.
+
+        ``approvals`` answers pending approvals by call id; unanswered ones keep the run suspended. Build
+        the Agent with the same tools and hooks as the original: memory and the audit chain are restored
+        from the checkpoint. Pass the run's ``output_type`` again for typed runs.
+
+        Raises:
+            RunNotFoundError: no checkpoint for ``run_id``
+            RunConflictError: another worker resumed or advanced the run first
+            CheckpointError: the checkpoint cannot be resumed (schema, output type, audit chain)
+        """
+        checkpoint = await self._load_checkpoint(run_id)
+        if checkpoint.status == "completed":
+            self.last_result = self._stored_result(checkpoint, output_type)
+            return self.last_result
+        self._restore(checkpoint, output_type)
+        self.last_result = await self._make_loop().resume(checkpoint, approvals or {}, output_type)
+        return self.last_result
+
+    async def resume_stream(
+        self, run_id: str, *, approvals: dict[str, bool] | None = None, output_type: Any = None
+    ) -> AsyncIterator[str]:
+        """Streaming resume(); ``agent.last_result`` is set when the iterator is exhausted."""
+        checkpoint = await self._load_checkpoint(run_id)
+        if checkpoint.status == "completed":
+            self.last_result = self._stored_result(checkpoint, output_type)
+            return
+        self._restore(checkpoint, output_type)
+        loop = self._make_loop()
+        async for chunk in loop.resume_stream(checkpoint, approvals or {}, output_type):
+            yield chunk
+        self.last_result = loop.result
+
+    async def _load_checkpoint(self, run_id: str) -> RunCheckpoint:
+        if self._config.run_store is None:
+            raise ValueError("resume() requires AgentConfig(run_store=...)")
+        checkpoint = await self._config.run_store.load(run_id)
+        if checkpoint is None:
+            raise RunNotFoundError(run_id)
+        if checkpoint.schema_version > CHECKPOINT_SCHEMA_VERSION:
+            raise CheckpointError(
+                run_id, f"schema version {checkpoint.schema_version} is newer than {CHECKPOINT_SCHEMA_VERSION}"
+            )
+        return checkpoint
+
+    @staticmethod
+    def _stored_result(checkpoint: RunCheckpoint, output_type: Any) -> AgentResult[Any]:
+        result: AgentResult[Any] = AgentResult.model_validate(checkpoint.result or {"output": ""})
+        if output_type is not None and result.parsed is not None:
+            result.parsed = OutputSpec.from_type(output_type).adapter.validate_python(result.parsed)
+        return result
+
+    def _restore(self, checkpoint: RunCheckpoint, output_type: Any) -> None:
+        name = OutputSpec.from_type(output_type).name if output_type is not None else None
+        if name != checkpoint.output_type_name:
+            raise CheckpointError(
+                checkpoint.run_id,
+                f"output_type {name!r} does not match the run's {checkpoint.output_type_name!r}",
+            )
+        if self._audit is not None:
+            try:
+                self._audit = AuditChain.restore(checkpoint.audit_events)
+            except AuditVerificationError as exc:
+                raise CheckpointError(checkpoint.run_id, f"audit chain failed verification: {exc}") from exc
+        self._memory.clear()
+        self._memory.add_many(checkpoint.messages)
 
     def _make_loop(self) -> AgentLoop:
         return AgentLoop(
@@ -224,6 +321,7 @@ class Agent:
                 provider_options=dict(self._config.provider_options),
             ),
             context_budget_tokens=self._config.context_budget_tokens,
+            run_store=self._config.run_store,
         )
 
     @property

@@ -8,16 +8,26 @@ import logging
 import math
 import time
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from agent_kit.audit.chain import AuditChain
+from agent_kit.durable import Checkpointer, PendingTurn, RunCheckpoint, RunStatus, RunStore
 from agent_kit.exceptions import (
     BudgetExceededError,
     MaxTurnsExceededError,
     OutputValidationError,
+    RunConflictError,
     RunStoppedByHookError,
 )
-from agent_kit.hooks import ApprovalRequest, LLMCallContext, ToolCallContext, ToolResultContext, run_hook
+from agent_kit.hooks import (
+    ApprovalRequest,
+    LLMCallContext,
+    Suspend,
+    ToolCallContext,
+    ToolResultContext,
+    run_hook,
+)
 from agent_kit.memory.budget import DEFAULT_TOKENS_PER_CHAR, plan_trim, prompt_chars
 from agent_kit.memory.in_memory import InMemoryStore
 from agent_kit.observability.tracer import AgentTracer
@@ -31,6 +41,7 @@ from agent_kit.types import (
     CircuitBreakerConfig,
     CostSummary,
     Message,
+    PendingApproval,
     RequestOptions,
     RetryPolicyConfig,
     SpanKind,
@@ -86,11 +97,12 @@ class AgentLoop:
         max_run_cost_usd: float | None = None,
         budget_guard: BudgetGuard | None = None,
         hooks: Hooks | None = None,
-        approver: Approver | None = None,
+        approver: Approver | Suspend | None = None,
         approval_timeout_s: float = 300.0,
         output_retries: int = 2,
         request_options: RequestOptions | None = None,
         context_budget_tokens: int | None = None,
+        run_store: RunStore | None = None,
     ) -> None:
         self._provider = provider
         self._registry = registry
@@ -122,27 +134,65 @@ class AgentLoop:
         self._context: dict[str, Any] = {}
         self._pending_stop: RunStoppedByHookError | None = None
         self._turns: list[Turn] = []
+        self._checkpointer = Checkpointer(run_store) if run_store is not None else None
+        self._prompt = ""
+        self._output_type_name: str | None = None
+        self._pending: PendingTurn | None = None  # the model turn whose tool calls are being resolved
+        self._suspended: dict[str, PendingApproval] = {}  # calls parked by approver=SUSPEND this turn
         self.result: AgentResult[Any] | None = None
 
-    async def run(self, prompt: str, output_type: Any = None, **context: Any) -> AgentResult[Any]:
+    async def run(
+        self, prompt: str, output_type: Any = None, run_id: str | None = None, **context: Any
+    ) -> AgentResult[Any]:
         """Execute the agent loop and return the final result."""
-        async for _ in self._execute(prompt, streaming=False, context=context, output_type=output_type):
+        async for _ in self._execute(prompt, False, context, output_type, run_id=run_id):
             pass
         assert self.result is not None
         return self.result
 
-    async def stream(self, prompt: str, output_type: Any = None, **context: Any) -> AsyncIterator[str]:
+    async def stream(
+        self, prompt: str, output_type: Any = None, run_id: str | None = None, **context: Any
+    ) -> AsyncIterator[str]:
         """Execute the agent loop, yielding text as it streams. ``self.result`` is set at the end."""
-        async for chunk in self._execute(prompt, streaming=True, context=context, output_type=output_type):
+        async for chunk in self._execute(prompt, True, context, output_type, run_id=run_id):
+            yield chunk
+
+    async def resume(
+        self, checkpoint: RunCheckpoint, approvals: dict[str, bool], output_type: Any = None
+    ) -> AgentResult[Any]:
+        """Continue a checkpointed run; ``approvals`` answers pending approvals by call id."""
+        async for _ in self._execute(
+            checkpoint.prompt, False, checkpoint.context, output_type, restore=checkpoint, approvals=approvals
+        ):
+            pass
+        assert self.result is not None
+        return self.result
+
+    async def resume_stream(
+        self, checkpoint: RunCheckpoint, approvals: dict[str, bool], output_type: Any = None
+    ) -> AsyncIterator[str]:
+        """Streaming resume(). ``self.result`` is set at the end."""
+        async for chunk in self._execute(
+            checkpoint.prompt, True, checkpoint.context, output_type, restore=checkpoint, approvals=approvals
+        ):
             yield chunk
 
     async def _execute(
-        self, prompt: str, streaming: bool, context: dict[str, Any], output_type: Any = None
+        self,
+        prompt: str,
+        streaming: bool,
+        context: dict[str, Any],
+        output_type: Any = None,
+        *,
+        run_id: str | None = None,
+        restore: RunCheckpoint | None = None,
+        approvals: dict[str, bool] | None = None,
     ) -> AsyncIterator[str]:
-        """The agent loop. Yields text chunks when ``streaming``; sets ``self.result`` on success."""
-        run_id = str(uuid.uuid4())
+        """The agent loop. Yields text chunks when ``streaming``; sets ``self.result`` when it ends."""
+        run_id = restore.run_id if restore else (run_id or str(uuid.uuid4()))
         self._run_id = run_id
         self._context = dict(context)
+        self._prompt = prompt
 
         # Typed runs: constrain natively when the provider can, else describe the schema in the prompt
         spec = OutputSpec.from_type(output_type) if output_type is not None else None
@@ -152,7 +202,7 @@ class AgentLoop:
             and bool(getattr(self._provider, "supports_structured_output", False))
         )
         # Some providers' native constraint rules out tool calls: prompt mode until the model answers
-        native = native_capable and (
+        native = restore.native_output if restore else native_capable and (
             bool(getattr(self._provider, "structured_output_with_tools", True))
             or not self._registry.schemas()
         )
@@ -161,7 +211,8 @@ class AgentLoop:
             system = f"{system}\n\n{spec.instructions()}" if system else spec.instructions()
         output_kwargs: dict[str, Any] = {"output_schema": spec} if native else {}
         parsed: Any = None
-        invalid_answers = 0
+        invalid_answers = restore.invalid_answers if restore else 0
+        self._output_type_name = spec.name if spec else None
 
         options_kwargs: dict[str, Any] = {}
         if getattr(self._provider, "supports_request_options", False):
@@ -172,7 +223,15 @@ class AgentLoop:
                 self._provider.name(),
             )
 
-        if self._reporter:
+        if self._checkpointer is not None and restore is None:
+            try:
+                json.dumps(context)
+            except TypeError:
+                raise TypeError("run context must be JSON-serialisable when run_store is set") from None
+            if await self._checkpointer.store.load(run_id) is not None:
+                raise ValueError(f"run '{run_id}' already exists; use agent.resume()")
+
+        if self._reporter and restore is None:
             await self._reporter.on_run_start(
                 run_id=run_id,
                 model=self._model or self._provider.config.default_model,
@@ -180,205 +239,213 @@ class AgentLoop:
             )
 
         with self._tracer.span("agent.run", kind=SpanKind.AGENT, run_id=run_id) as root_span:
-            # Audit: agent start
-            if self._audit:
-                self._audit.append(
-                    "agent_start",
-                    actor=run_id,
-                    payload={"prompt_preview": prompt[:200], "context_keys": list(context.keys())},
-                )
-
-            # Seed memory with the user prompt
-            self._memory.add(Message(role="user", content=prompt))
-
             turn_count = 0
+            resumed_pending: PendingTurn | None = None
+            if restore is None:
+                # Audit: agent start
+                if self._audit:
+                    self._audit.append(
+                        "agent_start",
+                        actor=run_id,
+                        payload={"prompt_preview": prompt[:200], "context_keys": list(context.keys())},
+                    )
+                # Seed memory with the user prompt
+                self._memory.add(Message(role="user", content=prompt))
+                if self._checkpointer is not None:
+                    await self._checkpointer.create(self._snapshot("running", turn_count, invalid_answers, native))
+            else:
+                assert self._checkpointer is not None
+                turn_count = restore.turn_count
+                self._turns = list(restore.turns)
+                self._run_cost_usd = restore.run_cost_usd
+                self._last_prompt_tokens = restore.last_prompt_tokens
+                self._last_prompt_chars = restore.last_prompt_chars
+                resumed_pending = restore.pending
+                self._checkpointer.current = restore
+                # Claim the run: a concurrent resume of the same checkpoint loses here
+                await self._checkpointer.save(restore.model_copy(update={"status": "running", "error": None}))
+                self._audit_event("run_resumed", run_id, {"turn": turn_count, "from_status": restore.status})
+
             final_output = ""
+            suspended = False
 
             try:
-                while turn_count < self._max_turns:
-                    turn_count += 1
-                    await self._enforce_budgets()
-                    tool_schemas = self._registry.schemas()
-                    self._trim_context(turn_count, system, tool_schemas)
-                    messages = self._memory.history(include_system=False)
-                    self._last_prompt_chars = prompt_chars(system, tool_schemas, messages)
-                    await self._gate_llm(turn_count, len(messages))
+                while True:
+                    if resumed_pending is not None:
+                        self._pending, resumed_pending = resumed_pending, None
+                        turn = self._pending.turn
+                        answers = approvals or {}
+                    else:
+                        if turn_count >= self._max_turns:
+                            raise MaxTurnsExceededError(self._max_turns)
+                        turn_count += 1
+                        await self._enforce_budgets()
+                        tool_schemas = self._registry.schemas()
+                        self._trim_context(turn_count, system, tool_schemas)
+                        messages = self._memory.history(include_system=False)
+                        self._last_prompt_chars = prompt_chars(system, tool_schemas, messages)
+                        await self._gate_llm(turn_count, len(messages))
 
-                    # --- LLM call with circuit breaker + retry ---
-                    with self._tracer.span(
-                        "llm.complete",
-                        kind=SpanKind.LLM,
-                        turn=turn_count,
-                        model=self._model or self._provider.config.default_model,
-                    ) as llm_span:
-                        turn: Turn | None = None
-                        if streaming:
-                            # Retry and circuit breaking cover opening the stream. A failure
-                            # after text has been yielded propagates: replaying would duplicate it.
-                            it, item = await with_retry(
-                                self._cb_call,
-                                self._retry_policy,
-                                run_id,
-                                self._open_stream,
-                                messages,
-                                tool_schemas or None,
-                                system,
-                                {**output_kwargs, **options_kwargs},
-                            )
-                            chunks: list[str] = []
-                            while item is not None:
-                                if isinstance(item, Turn):
-                                    turn = item
-                                else:
-                                    chunks.append(item)
-                                    yield item
-                                item = await anext(it, None)
-                            if turn is None:  # provider streams text only
-                                turn = Turn(
-                                    messages_in=messages,
-                                    message_out=Message(role="assistant", content="".join(chunks)),
-                                    cost=CostSummary(
-                                        model=self._model or self._provider.config.default_model
-                                    ),
+                        # --- LLM call with circuit breaker + retry ---
+                        with self._tracer.span(
+                            "llm.complete",
+                            kind=SpanKind.LLM,
+                            turn=turn_count,
+                            model=self._model or self._provider.config.default_model,
+                        ) as llm_span:
+                            if streaming:
+                                # Retry and circuit breaking cover opening the stream. A failure
+                                # after text has been yielded propagates: replaying would duplicate it.
+                                it, item = await with_retry(
+                                    self._cb_call,
+                                    self._retry_policy,
+                                    run_id,
+                                    self._open_stream,
+                                    messages,
+                                    tool_schemas or None,
+                                    system,
+                                    {**output_kwargs, **options_kwargs},
                                 )
-                        else:
-                            turn = await with_retry(
-                                self._cb_call,
-                                self._retry_policy,
-                                run_id,
-                                self._provider.complete,
-                                messages,
-                                model=self._model,
-                                tools=tool_schemas if tool_schemas else None,
-                                system=system or None,
-                                max_tokens=self._max_tokens_per_turn,
-                                **output_kwargs,
-                                **options_kwargs,
-                            )
-                        llm_span.set_attribute("input_tokens", turn.cost.input_tokens)
-                        llm_span.set_attribute("output_tokens", turn.cost.output_tokens)
-                        llm_span.set_attribute("cost_usd", turn.cost.cost_usd)
+                                chunks: list[str] = []
+                                streamed: Turn | None = None
+                                while item is not None:
+                                    if isinstance(item, Turn):
+                                        streamed = item
+                                    else:
+                                        chunks.append(item)
+                                        yield item
+                                    item = await anext(it, None)
+                                if streamed is not None:
+                                    turn = streamed
+                                else:  # provider streams text only
+                                    turn = Turn(
+                                        messages_in=messages,
+                                        message_out=Message(role="assistant", content="".join(chunks)),
+                                        cost=CostSummary(
+                                            model=self._model or self._provider.config.default_model
+                                        ),
+                                    )
+                            else:
+                                turn = await with_retry(
+                                    self._cb_call,
+                                    self._retry_policy,
+                                    run_id,
+                                    self._provider.complete,
+                                    messages,
+                                    model=self._model,
+                                    tools=tool_schemas if tool_schemas else None,
+                                    system=system or None,
+                                    max_tokens=self._max_tokens_per_turn,
+                                    **output_kwargs,
+                                    **options_kwargs,
+                                )
+                            llm_span.set_attribute("input_tokens", turn.cost.input_tokens)
+                            llm_span.set_attribute("output_tokens", turn.cost.output_tokens)
+                            llm_span.set_attribute("cost_usd", turn.cost.cost_usd)
 
-                    # Audit: LLM response
-                    if self._audit:
-                        self._audit.append(
-                            "llm_complete",
-                            actor=self._provider.name(),
-                            payload={
-                                "model": turn.cost.model,
-                                "input_tokens": turn.cost.input_tokens,
-                                "output_tokens": turn.cost.output_tokens,
-                                "has_tool_calls": len(turn.tool_calls) > 0,
-                            },
-                        )
-
-                    self._last_prompt_tokens = (
-                        turn.cost.input_tokens + turn.cost.cache_read_tokens + turn.cost.cache_write_tokens
-                    )
-                    self._audit_context_events(turn_count, turn)
-
-                    # Track cost
-                    self._tracer.record_cost(
-                        tokens=turn.cost.total_tokens,
-                        model=turn.cost.model,
-                        usd=turn.cost.cost_usd,
-                    )
-                    self._run_cost_usd += turn.cost.cost_usd
-                    if self._budget_guard is not None and self._reporter is not None:
-                        self._budget_guard.record_spend(
-                            self._reporter.agent_name, self._reporter.project, turn.cost.cost_usd
-                        )
-
-                    # Add assistant message to memory
-                    if turn.message_out:
-                        self._memory.add(turn.message_out)
-
-                    # No tool calls → a final answer (validated when the run is typed)
-                    if not turn.tool_calls:
-                        final_output = turn.message_out.content if turn.message_out else ""
-                        self._turns.append(turn)
-                        if self._reporter:
-                            await self._reporter.on_turn_complete(run_id, turn, len(self._turns) - 1)
-                        if spec is None:
-                            break
-                        try:
-                            parsed = spec.parse(final_output)
-                            break
-                        except OutputParseError as exc:
-                            invalid_answers += 1
-                            self._audit_event(
-                                "output_validation_failed",
-                                "agent",
-                                {
-                                    "turn": turn_count,
-                                    "attempt": invalid_answers,
-                                    "native": native,
-                                    "errors": exc.errors[:500],
-                                },
-                            )
-                            if invalid_answers > self._output_retries:
-                                raise OutputValidationError(
-                                    exc.errors, final_output, invalid_answers
-                                ) from None
-                            self._memory.add(
-                                Message(role="user", content=_REPAIR_PROMPT.format(errors=exc.errors))
-                            )
-                            if native_capable and not native:
-                                # The model has stopped calling tools; constrain the repair natively
-                                native = True
-                                output_kwargs = {"output_schema": spec}
-                            continue
-
-                    # --- Execute tool calls concurrently; record results in call order ---
-                    tool_results = await asyncio.gather(
-                        *(self._run_tool(tc, turn_count) for tc in turn.tool_calls)
-                    )
-                    for tc, tool_result in zip(turn.tool_calls, tool_results):
-                        # Audit: tool execution
+                        # Audit: LLM response
                         if self._audit:
                             self._audit.append(
-                                "tool_call",
-                                actor=tc.tool_name,
+                                "llm_complete",
+                                actor=self._provider.name(),
                                 payload={
-                                    "call_id": tc.call_id,
-                                    "success": tool_result.error is None,
-                                    "error": tool_result.error,
-                                    "duration_ms": tool_result.duration_ms,
+                                    "model": turn.cost.model,
+                                    "input_tokens": turn.cost.input_tokens,
+                                    "output_tokens": turn.cost.output_tokens,
+                                    "has_tool_calls": len(turn.tool_calls) > 0,
                                 },
                             )
 
-                        # Feed tool result back as a tool message
-                        output_str = (
-                            f"Error: {tool_result.error}"
-                            if tool_result.error
-                            else json.dumps(tool_result.output, default=str)
+                        self._last_prompt_tokens = (
+                            turn.cost.input_tokens + turn.cost.cache_read_tokens + turn.cost.cache_write_tokens
                         )
-                        self._memory.add(
-                            Message(
-                                role="tool",
-                                content=output_str,
-                                tool_call_id=tc.call_id,
-                                metadata={"is_error": True} if tool_result.error else {},
-                            )
-                        )
-                        turn.tool_results.append(tool_result)
+                        self._audit_context_events(turn_count, turn)
 
+                        # Track cost
+                        self._tracer.record_cost(
+                            tokens=turn.cost.total_tokens,
+                            model=turn.cost.model,
+                            usd=turn.cost.cost_usd,
+                        )
+                        self._run_cost_usd += turn.cost.cost_usd
+                        if self._budget_guard is not None and self._reporter is not None:
+                            self._budget_guard.record_spend(
+                                self._reporter.agent_name, self._reporter.project, turn.cost.cost_usd
+                            )
+
+                        # Add assistant message to memory
+                        if turn.message_out:
+                            self._memory.add(turn.message_out)
+
+                        # No tool calls → a final answer (validated when the run is typed)
+                        if not turn.tool_calls:
+                            final_output = turn.message_out.content if turn.message_out else ""
+                            self._turns.append(turn)
+                            if self._reporter:
+                                await self._reporter.on_turn_complete(run_id, turn, len(self._turns) - 1)
+                            if spec is None:
+                                break
+                            try:
+                                parsed = spec.parse(final_output)
+                                break
+                            except OutputParseError as exc:
+                                invalid_answers += 1
+                                self._audit_event(
+                                    "output_validation_failed",
+                                    "agent",
+                                    {
+                                        "turn": turn_count,
+                                        "attempt": invalid_answers,
+                                        "native": native,
+                                        "errors": exc.errors[:500],
+                                    },
+                                )
+                                if invalid_answers > self._output_retries:
+                                    raise OutputValidationError(
+                                        exc.errors, final_output, invalid_answers
+                                    ) from None
+                                self._memory.add(
+                                    Message(role="user", content=_REPAIR_PROMPT.format(errors=exc.errors))
+                                )
+                                if native_capable and not native:
+                                    # The model has stopped calling tools; constrain the repair natively
+                                    native = True
+                                    output_kwargs = {"output_schema": spec}
+                                continue
+
+                        self._pending = PendingTurn(turn=turn)
+                        answers = {}
+                        await self._checkpoint("running", turn_count, invalid_answers, native)  # A
+
+                    # --- Resolve tool calls concurrently; record results in call order ---
+                    waiting = await self._resolve_tools(turn_count, self._pending, answers)
+                    if waiting:
+                        self._audit_event(
+                            "run_suspended",
+                            run_id,
+                            {"turn": turn_count, "pending_call_ids": [a.call_id for a in waiting]},
+                        )
+                        await self._checkpoint("suspended", turn_count, invalid_answers, native)  # D
+                        suspended = True
+                        break
+                    self._record_tool_results(self._pending)
+                    self._pending = None
                     self._turns.append(turn)
                     if self._reporter:
                         await self._reporter.on_turn_complete(run_id, turn, len(self._turns) - 1)
+                    await self._checkpoint("running", turn_count, invalid_answers, native)  # C
                     if self._pending_stop is not None:
                         raise self._pending_stop
-
-                else:
-                    raise MaxTurnsExceededError(self._max_turns)
 
             except Exception as exc:
                 if self._reporter:
                     await self._reporter.on_run_error(run_id, exc, turn_count)
+                if self._checkpointer is not None and not isinstance(exc, RunConflictError):
+                    await self._checkpointer.fail(f"{type(exc).__name__}: {exc}")
                 raise
 
             # Audit: agent complete
-            if self._audit:
+            if self._audit and not suspended:
                 self._audit.append(
                     "agent_complete",
                     actor=run_id,
@@ -393,6 +460,21 @@ class AgentLoop:
             root_span.set_attribute("total_turns", turn_count)
             root_span.set_attribute("total_cost_usd", self._totals()[0])
 
+        if suspended:
+            assert self._pending is not None
+            self.result = AgentResult(
+                output="",
+                run_id=run_id,
+                status="suspended",
+                pending_approvals=list(self._pending.approvals),
+                turns=list(self._turns),
+                total_cost_usd=self._totals()[0],
+                total_tokens=self._totals()[1],
+                audit_root_hash=self._audit.root_hash() if self._audit else None,
+                trace_id=self._tracer.trace_id,
+            )
+            return
+
         result: AgentResult[Any] = AgentResult(
             output=final_output,
             parsed=parsed,
@@ -403,6 +485,9 @@ class AgentLoop:
             audit_root_hash=self._audit.root_hash() if self._audit else None,
             trace_id=self._tracer.trace_id,
         )
+        await self._checkpoint(
+            "completed", turn_count, invalid_answers, native, result=result.model_dump(mode="json")
+        )  # E
 
         if self._reporter:
             await self._reporter.on_run_complete(run_id, result)
@@ -414,6 +499,150 @@ class AgentLoop:
                 )
 
         self.result = result
+
+    def _snapshot(
+        self,
+        status: RunStatus,
+        turn_count: int,
+        invalid_answers: int,
+        native: bool,
+        result: dict[str, Any] | None = None,
+    ) -> RunCheckpoint:
+        now = datetime.utcnow()
+        current = self._checkpointer.current if self._checkpointer else None
+        return RunCheckpoint(
+            run_id=self._run_id,
+            version=current.version if current else 0,
+            status=status,
+            created_at=current.created_at if current else now,
+            updated_at=now,
+            prompt=self._prompt,
+            context=self._context,
+            output_type_name=self._output_type_name,
+            messages=self._memory.history(),
+            turns=list(self._turns),
+            turn_count=turn_count,
+            run_cost_usd=self._run_cost_usd,
+            invalid_answers=invalid_answers,
+            native_output=native,
+            last_prompt_tokens=self._last_prompt_tokens,
+            last_prompt_chars=self._last_prompt_chars,
+            audit_events=self._audit.events() if self._audit else [],
+            pending=self._pending.model_copy(deep=True) if self._pending else None,
+            result=result,
+        )
+
+    async def _checkpoint(
+        self,
+        status: RunStatus,
+        turn_count: int,
+        invalid_answers: int,
+        native: bool,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        if self._checkpointer is not None:
+            await self._checkpointer.save(self._snapshot(status, turn_count, invalid_answers, native, result))
+
+    async def _resolve_tools(
+        self, turn_number: int, pending: PendingTurn, answers: dict[str, bool]
+    ) -> list[PendingApproval]:
+        """Resolve every tool call of a pending turn concurrently; return approvals still waiting."""
+        order = {tc.call_id: i for i, tc in enumerate(pending.turn.tool_calls)}
+
+        async def resolve(tc: ToolCall) -> None:
+            if tc.call_id in pending.results:
+                return
+            approval = next((a for a in pending.approvals if a.call_id == tc.call_id), None)
+            result: ToolResult | None
+            if approval is not None:
+                if tc.call_id not in answers:
+                    return
+                pending.approvals.remove(approval)
+                if answers[tc.call_id]:
+                    self._audit_event("approval_granted", tc.tool_name, {"call_id": tc.call_id, "via": "resume"})
+                    result = await self._run_tool(tc, turn_number, gate=False)
+                else:
+                    self._audit_event(
+                        "approval_denied",
+                        tc.tool_name,
+                        {"call_id": tc.call_id, "timed_out": False, "error": None, "via": "resume"},
+                    )
+                    reason = self._deny_tool(self._tool_context(tc, turn_number), "before_tool", "approval denied")
+                    result = ToolResult(
+                        call_id=tc.call_id, tool_name=tc.tool_name, output=None, error=f"Tool call denied: {reason}"
+                    )
+            elif tc.call_id in pending.started and not self._is_idempotent(tc.tool_name):
+                # Started before a crash with no recorded result: never run a side effect twice
+                self._audit_event("tool_interrupted", tc.tool_name, {"call_id": tc.call_id})
+                result = ToolResult(
+                    call_id=tc.call_id,
+                    tool_name=tc.tool_name,
+                    output=None,
+                    error="Tool call interrupted before completion; not retried",
+                )
+            else:
+                result = await self._run_tool(tc, turn_number)
+            if result is None:
+                pending.approvals.append(self._suspended.pop(tc.call_id))
+            else:
+                pending.results[tc.call_id] = result
+
+        await asyncio.gather(*(resolve(tc) for tc in pending.turn.tool_calls))
+        pending.approvals.sort(key=lambda a: order[a.call_id])
+        return list(pending.approvals)
+
+    def _record_tool_results(self, pending: PendingTurn) -> None:
+        """Audit the turn's tool results and add them to memory, in call order."""
+        turn = pending.turn
+        for tc in turn.tool_calls:
+            tool_result = pending.results[tc.call_id]
+            if self._audit:
+                self._audit.append(
+                    "tool_call",
+                    actor=tc.tool_name,
+                    payload={
+                        "call_id": tc.call_id,
+                        "success": tool_result.error is None,
+                        "error": tool_result.error,
+                        "duration_ms": tool_result.duration_ms,
+                    },
+                )
+            output_str = (
+                f"Error: {tool_result.error}"
+                if tool_result.error
+                else json.dumps(tool_result.output, default=str)
+            )
+            self._memory.add(
+                Message(
+                    role="tool",
+                    content=output_str,
+                    tool_call_id=tc.call_id,
+                    metadata={"is_error": True} if tool_result.error else {},
+                )
+            )
+            turn.tool_results.append(tool_result)
+
+    def _is_idempotent(self, tool_name: str) -> bool:
+        try:
+            return self._registry.get(tool_name).schema.idempotent
+        except Exception:
+            return False
+
+    def _tool_context(self, tc: ToolCall, turn: int) -> ToolCallContext:
+        return ToolCallContext(
+            run_id=self._run_id,
+            turn=turn,
+            tool_name=tc.tool_name,
+            arguments=dict(tc.arguments),
+            call_id=tc.call_id,
+            context=self._context,
+        )
+
+    async def _mark_started(self, call_id: str) -> None:
+        if self._pending is not None:
+            self._pending.started.append(call_id)
+        if self._checkpointer is not None:
+            await self._checkpointer.mark_started(call_id)  # B
 
     def _totals(self) -> tuple[float, int]:
         """Cost and tokens of this run's turns (the tracer's totals span every run on the agent)."""
@@ -509,8 +738,8 @@ class AgentLoop:
         ).__aiter__()
         return it, await anext(it, None)
 
-    async def _run_tool(self, tc: ToolCall, turn: int) -> ToolResult:
-        """Gate, execute, and filter one tool call inside its span. Never raises."""
+    async def _run_tool(self, tc: ToolCall, turn: int, gate: bool = True) -> ToolResult | None:
+        """Gate, execute, and filter one tool call inside its span. None when parked for approval."""
         with self._tracer.span(f"tool.{tc.tool_name}", kind=SpanKind.TOOL, tool=tc.tool_name) as tool_span:
             t0 = time.monotonic()
 
@@ -528,10 +757,13 @@ class AgentLoop:
             except Exception as exc:
                 tool_result = failed(str(exc))
             else:
-                denial = await self._gate_tool(tc, turn)
+                denial = await self._gate_tool(tc, turn) if gate else None
+                if tc.call_id in self._suspended:
+                    return None  # parked until Agent.resume() answers the approval
                 if denial is not None:
                     tool_result = failed(f"Tool call denied: {denial}")
                 else:
+                    await self._mark_started(tc.call_id)
                     try:
                         tool_result = await tool(call_id=tc.call_id, **tc.arguments)
                     except Exception as exc:
@@ -548,14 +780,7 @@ class AgentLoop:
         """Run before_tool hooks. Returns a denial reason, or None to execute."""
         if self._hooks is None or not self._hooks.before_tool:
             return None
-        ctx = ToolCallContext(
-            run_id=self._run_id,
-            turn=turn,
-            tool_name=tc.tool_name,
-            arguments=dict(tc.arguments),
-            call_id=tc.call_id,
-            context=self._context,
-        )
+        ctx = self._tool_context(tc, turn)
         for hook in self._hooks.before_tool:
             decision = await run_hook(hook, ctx)
             if decision.kind == "allow":
@@ -571,6 +796,15 @@ class AgentLoop:
         self._audit_event("approval_requested", ctx.tool_name, {"call_id": ctx.call_id, "reason": reason})
         if self._approver is None:
             return self._deny_tool(ctx, "before_tool", "approval required but no approver is configured")
+        if isinstance(self._approver, Suspend):
+            self._suspended[ctx.call_id] = PendingApproval(
+                call_id=ctx.call_id,
+                tool_name=ctx.tool_name,
+                arguments=dict(ctx.arguments),
+                reason=reason,
+                turn=ctx.turn,
+            )
+            return None
         request = ApprovalRequest(
             run_id=ctx.run_id,
             turn=ctx.turn,
