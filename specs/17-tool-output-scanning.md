@@ -215,7 +215,9 @@ quote them). Developer tooling that screens written files is never allowlisted f
 - **Extraction** from all spans: URLs (`https?://…`), IPv4 addresses, domains (`label(.label)+.tld`, letters in
   the TLD), SHA-256 / SHA-1 / MD5 hex strings (64 / 40 / 32 hex characters bounded by non-hex). URLs are looked up
   without query string and fragment; a URL's host is also looked up as a domain. Values are de-duplicated,
-  lower-cased (hosts, hashes), and capped at `max_indicators` in order of first appearance.
+  lower-cased (hosts, hashes), and capped at `max_indicators` in order of first appearance. Names ending in a
+  file extension that is not a top-level domain (`.pdf`, `.json`, `.png`, …) are not domains. URL userinfo is
+  never sent.
 - **Never looked up:** RFC 2606 / 6761 names (`example.com`, `example.net`, `example.org`, and any name under
   `.example`, `.test`, `.invalid`, `.localhost`, `.local`), `localhost`, private/loopback/link-local/reserved IPs
   (`ipaddress` module), and anything in `ignore` (exact value or domain suffix).
