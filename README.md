@@ -3,39 +3,87 @@
 [![PyPI](https://img.shields.io/pypi/v/agent-kit-ai)](https://pypi.org/project/agent-kit-ai/)
 [![Python](https://img.shields.io/pypi/pyversions/agent-kit-ai)](https://pypi.org/project/agent-kit-ai/)
 
-**Production-ready framework for building AI agents. Type-safe. Observable. Circuit-broken.**
+**Production AI agents you can govern, afford, and prove.** Policy, cost control, security, and tamper-evident
+audit that hold across every tool, MCP server, and sub-agent — with a self-hostable ops backend and
+compliance-grade evidence.
 
 ```bash
 pip install agent-kit-ai
 ```
 
----
+First-party SDKs and agent frameworks give you a capable loop. agent-kit is for what comes after the demo:
 
-## Why agent-kit?
+```python
+from agent_kit import SUSPEND, Agent, AgentConfig
+from agent_kit.cloud import CloudReporter
+from agent_kit.durable import SQLiteRunStore
+from agent_kit.hooks import Hooks, require_approval
+from agent_kit.providers import AnthropicProvider
+from agent_kit.scanning import PatternScanner, scan_tool_output
 
-First-party SDKs and agent frameworks give you a capable loop. agent-kit is for what comes after the
-demo — running agents you can trust, afford, and prove things about:
+agent = Agent(AnthropicProvider(), tools=[lookup_order, issue_refund, research_agent.as_tool("research", "...")],
+    config=AgentConfig(
+        hooks=Hooks(
+            before_tool=[require_approval("issue_refund")],    # a human signs off on every refund
+            after_tool=[scan_tool_output(PatternScanner())],   # poisoned tool output never reaches the model
+        ),
+        approver=SUSPEND,                                      # approvals can wait for days...
+        run_store=SQLiteRunStore("runs.db"),                   # ...and runs survive crashes and deploys
+        max_run_cost_usd=0.50,                                 # hard cap, sub-agents included
+        cloud=CloudReporter(project="support", agent_name="refunds"),  # fleet metrics, alerts, hosted audit
+    ),
+)
+```
 
-| Built in | What you get |
+Retry, per-provider circuit breaking, cost tracking, and a tamper-evident audit chain are on by default. Every
+policy above also applies inside the `research` sub-agent.
+
+## What you get
+
+### Govern what agents do
+
+- **Hooks and approval gates** — block tools, require human approval, redact tool output, or stop runs. Fail-closed; every decision is audited.
+- **Tool allowlists** — enforced at call time, not just hidden from the prompt.
+- **Tool output scanning** — hidden instructions, chat-template tokens, data-exfiltration links, and known-malicious URLs, domains, and hashes ([Nullcone](https://nullcone.ai) threat intel) are blocked or marked untrusted before the model reads them.
+- **Agents as tools** — delegate to sub-agents that inherit the caller's policy, budget, and approvals; they can't be used to route around a rule.
+
+### Prove what happened
+
+- **Tamper-evident audit chain** — a hash-linked record of every model call, tool call, and policy decision; verified locally and re-verified server-side. A parent run's chain commits to each sub-agent's chain.
+- **Signed evidence bundles** — Ed25519-signed exports anyone can verify offline with `agent-kit verify`, no trust in the vendor required.
+- **Retention, legal holds, and deletion receipts** — tier-based retention, holds that block purges, and a signed receipt for every purged run.
+
+### Control cost and failure
+
+- **Cost circuit breaker** — per-run caps and daily / weekly / monthly fleet budgets stop agents before the next model call, and alert when tripped.
+- **Cost per turn** — token- and cache-aware USD for current Claude and OpenAI models; unpriced models are logged, never silently $0.
+- **Circuit breakers and retry** — stop hammering a failing provider; every state change lands in the audit chain.
+- **Durable runs** — checkpoints at every turn; resume after a crash, suspend for approval, never run a side effect twice.
+
+### Operate the fleet
+
+- **Self-hostable [agent-kit Cloud](#agent-kit-cloud)** — fleet metrics, alerting (Slack, PagerDuty, webhook, SMTP), budgets, SLA context, and the hosted audit trail on your own Postgres.
+- **Bring your existing agents** — Claude Agent SDK and OpenAI Agents SDK adapters, plus OTLP ingest for any OpenTelemetry-instrumented agent in any language.
+- **Built for real workloads** — MCP tools, typed results, prompt caching and context management, parallel tool calls, streaming, and Anthropic / OpenAI / Ollama / any OpenAI-compatible endpoint behind one interface.
+
+## Compliance evidence: SOC 2 and the EU AI Act
+
+Auditors increasingly ask what your AI agents were allowed to do, what they did, and whether the record can be
+trusted. agent-kit produces that evidence as a by-product of running the agent:
+
+| What a reviewer asks | What agent-kit gives you |
 |---|---|
-| Per-provider circuit breaker | Stops hammering a failing provider; every state change lands in the audit chain |
-| Retry with backoff | Transient provider failures retried under a configurable policy |
-| Tamper-evident audit chain | Hash-linked record of every LLM call and tool call; verify locally, re-verified server-side, JSONL/CSV export |
-| Cost per turn | Token- and cache-aware USD for current Claude and OpenAI models; unpriced models are logged, not silently $0 |
-| Cost circuit breaker | Per-run caps and daily / weekly / monthly fleet budgets stop agents before the next model call, and alert when tripped |
-| MCP tools | Tools from any MCP server over stdio or streamable HTTP, governed by the same allowlist, hooks, budgets, and audit |
-| Hooks and approval gates | Block tools, require human approval, redact tool output, or stop runs — fail-closed, every decision audited |
-| Agents as tools | Delegate to child agents that can't escape the parent's policy, budget, or approvals — child audit chains are hash-committed into the parent's |
-| Tool output scanning | Poisoned web pages, documents, MCP results, and child-agent answers are blocked or marked untrusted before the model reads them; every finding is audited and can page on-call |
-| Durable runs | Checkpoints at every turn: resume after crashes, suspend for human approval, never run a side effect twice |
-| Evidence bundles | Signed exports of audit chains that anyone can verify offline (`agent-kit verify`), with retention, legal holds, and signed deletion receipts |
-| Self-hostable ops backend | Fleet metrics, alerting (Slack, PagerDuty, webhook, SMTP), and SLA context — see [agent-kit Cloud](#agent-kit-cloud) |
-| Provider-neutral | Anthropic, OpenAI, Ollama, and any OpenAI-compatible endpoint behind one interface |
-| OpenTelemetry | No-op by default; console JSON or OTLP export when you want it |
+| Who or what could act, and what was blocked? (SOC 2 CC6 — logical access) | Allowlists, policy hooks, and approval decisions, each recorded in the audit chain |
+| How do you detect anomalies? (SOC 2 CC7.2 — monitoring) | Fleet metrics; circuit breaker, error-rate, cost, budget, and flagged-tool-output alerts |
+| How do you evaluate and respond to incidents? (SOC 2 CC7.3–CC7.4) | Alert firings with acknowledgement history, and a per-run audit trail to investigate from |
+| Can the logs be trusted and handed over? (EU AI Act record-keeping, SOC 2 evidence requests) | Hash-chained audit verified server-side; signed evidence bundles verifiable offline |
+| How long is data kept, and how is it disposed of? (SOC 2 C1.2) | Retention policies, legal holds, and signed deletion receipts |
 
-Tool calls run in parallel, and `agent.stream()` runs the same loop as `agent.run()` — tools, retry,
-circuit breaking, and audit included. Typed results, context management, and MCP tools are built in too. Not
-yet: handoffs — tracked in [specs/06-harness-roadmap.md](specs/06-harness-roadmap.md).
+agent-kit doesn't make an organization SOC 2 or EU AI Act compliant, and agent-kit Cloud has no SOC 2 report of
+its own — it gives your compliance program trustworthy records about your AI agents. Confirm the mapping with your
+auditor.
+
+Not yet: handoffs — tracked in [specs/06-harness-roadmap.md](specs/06-harness-roadmap.md).
 
 ---
 
