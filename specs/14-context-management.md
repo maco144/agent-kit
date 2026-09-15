@@ -154,7 +154,7 @@ Applied in both `complete()` and `stream()`, in this order, after tools:
 5. `compaction` → `context_management.edits` gains
    `{"type": "compact_20260112", "trigger": {"type": "input_tokens", "value": trigger_tokens}}` plus
    `"instructions"` when set; beta `compact-2026-01-12`.
-6. `clear_tool_results` → `context_management.edits` gains
+6. `clear_tool_results` → (emitted before the compaction edit in `edits`) `context_management.edits` gains
    `{"type": "clear_tool_uses_20250919", "trigger": {"type": "input_tokens", "value": trigger_tokens},
    "keep": {"type": "tool_uses", "value": keep}}` plus `"exclude_tools"` when non-empty and
    `"clear_tool_inputs": true` when `clear_inputs`; beta `context-management-2025-06-27`.
@@ -195,15 +195,19 @@ need `prompt_caching=False`.
 - **Token budget**, checked before each provider call, after budget enforcement and before `before_llm`
   hooks. Skipped when `context_budget_tokens is None` or `request_options.compaction` is set.
   1. `messages = memory.history(include_system=False)`; `chars = prompt_chars(system, tools, messages)`.
-  2. `tokens_per_char` = the previous provider call's `(input + cache_read + cache_write tokens) / chars
-     sent in that call` when a previous call in this loop reported tokens and chars > 0; otherwise `0.25`.
+  2. Estimate: when a previous call in this loop reported tokens, `estimated = reported (input +
+     cache_read + cache_write) tokens + (chars − chars sent in that call) × 0.25`; otherwise
+     `chars × 0.25`. `tokens_per_char = max(estimated, 0) / chars`. *(Amended after live Ollama runs: a
+     ratio taken from a short first request is dominated by fixed chat-template tokens — 169 reported
+     tokens for ~250 characters — and overestimated a 2,000-character tool result by 4×.)*
   3. `plan_trim(messages, chars, budget, tokens_per_char)`:
      - `before = ceil(chars × tokens_per_char)`; if `before <= budget` → `(0, before, before)`.
      - Otherwise drop the oldest messages one by one (each message's chars = `len(content)` +
        `len(json.dumps(native_content))` when present + `len(json.dumps(arguments))` per tool call),
        subtracting their estimated tokens, until the estimate is `<= budget // 2` or only the last message
        remains → `(dropped, before, after)`.
-  4. If `dropped > 0`: `removed = memory.trim_oldest(dropped)` (may remove more to stay tool-safe, or
+  4. If `dropped > 0`: `removed = memory.trim_oldest(dropped)`; nothing more happens when `removed == 0`
+     (only the current exchange remains). Otherwise (may remove more to stay tool-safe, or
      fewer when the latest user turn anchors the window); re-read history; audit `context_trimmed`
      (`turn`, `removed_messages` = removed, `estimated_tokens_before`, `estimated_tokens_after` =
      recomputed on the new history, `budget_tokens`).

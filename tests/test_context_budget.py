@@ -195,3 +195,41 @@ async def test_context_events_are_audited():
 def test_agent_config_defaults():
     config = AgentConfig()
     assert (config.context_budget_tokens, config.memory_window, config.prompt_caching) == (150_000, None, True)
+
+
+async def test_estimate_adds_new_chars_to_reported_tokens():
+    # turn 1 is a short prompt whose reported tokens are mostly fixed overhead; scaling that ratio
+    # across a large tool result would overestimate and trim needlessly
+    @tool(description="big result")
+    async def big() -> str:
+        return "z" * 2_000
+
+    tc = [ToolCall(tool_name="big", arguments={}, call_id="b1")]
+    first = Turn(message_out=Message(role="assistant", content="", tool_calls=tc), tool_calls=tc,
+                 cost=CostSummary(input_tokens=150))
+    provider = Scripted(first, final())
+    agent = Agent(provider, tools=[big], config=AgentConfig(context_budget_tokens=1_000))
+    recorded = audited(agent)
+
+    await agent.run("go")
+
+    assert not [p for e, p in recorded if e == "context_trimmed"]
+    assert provider.requests[1][0][-1].role == "tool"
+
+
+async def test_cut_that_removes_nothing_is_not_audited():
+    @tool(description="big result")
+    async def big() -> str:
+        return "z" * 8_000
+
+    tc = [ToolCall(tool_name="big", arguments={}, call_id="b1")]
+    first = Turn(message_out=Message(role="assistant", content="", tool_calls=tc), tool_calls=tc,
+                 cost=CostSummary(input_tokens=50))
+    provider = Scripted(first, final())
+    agent = Agent(provider, tools=[big], config=AgentConfig(context_budget_tokens=500))
+    recorded = audited(agent)
+
+    await agent.run("go")  # only one exchange: nothing can be removed without orphaning the tool result
+
+    assert [m.role for m in provider.requests[1][0]] == ["user", "assistant", "tool"]
+    assert not [p for e, p in recorded if e == "context_trimmed"]

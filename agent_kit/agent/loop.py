@@ -420,15 +420,20 @@ class AgentLoop:
         if budget is None or self._request_options.compaction is not None:
             return
         messages = self._memory.history(include_system=False)
-        ratio = (
-            self._last_prompt_tokens / self._last_prompt_chars
-            if self._last_prompt_tokens and self._last_prompt_chars
-            else DEFAULT_TOKENS_PER_CHAR
-        )
-        drop, before, _ = plan_trim(messages, prompt_chars(system, tools, messages), budget, ratio)
+        chars = prompt_chars(system, tools, messages)
+        # Reported tokens are exact for what was already sent; only the new characters are estimated.
+        # (A ratio from a short prompt is dominated by fixed template overhead and overestimates.)
+        if self._last_prompt_tokens and self._last_prompt_chars:
+            estimated = self._last_prompt_tokens + (chars - self._last_prompt_chars) * DEFAULT_TOKENS_PER_CHAR
+        else:
+            estimated = chars * DEFAULT_TOKENS_PER_CHAR
+        ratio = max(estimated, 0.0) / chars if chars else DEFAULT_TOKENS_PER_CHAR
+        drop, before, _ = plan_trim(messages, chars, budget, ratio)
         if drop == 0:
             return
         removed = self._memory.trim_oldest(drop)
+        if removed == 0:  # the only messages left form the current exchange
+            return
         after = math.ceil(prompt_chars(system, tools, self._memory.history(include_system=False)) * ratio)
         self._audit_event(
             "context_trimmed",
