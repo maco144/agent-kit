@@ -99,3 +99,47 @@ def test_sqlite_memory_file_persistence(tmp_path):
     assert len(history) == 1
     assert history[0].content == "persisted message"
     mem2.close()
+
+
+def test_sqlite_persists_native_content(tmp_path):
+    native = [{"type": "thinking", "thinking": "", "signature": "sig"}, {"type": "text", "text": "hi"}]
+    path = tmp_path / "n.db"
+    SQLiteMemory(path).add(
+        Message(role="assistant", content="hi", native_content=native, native_provider="anthropic")
+    )
+    restored = SQLiteMemory(path).history()[0]
+    assert restored.native_content == native
+    assert restored.native_provider == "anthropic"
+    SQLiteMemory(path).add(Message(role="user", content="plain"))
+    assert SQLiteMemory(path).history()[1].native_content is None
+
+
+def test_sqlite_migrates_database_without_native_column(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL, "
+        "content TEXT NOT NULL, tool_call_id TEXT, metadata TEXT NOT NULL DEFAULT '{}', "
+        "tool_calls TEXT NOT NULL DEFAULT '[]')"
+    )
+    conn.execute("INSERT INTO messages (role, content) VALUES ('user', 'hello')")
+    conn.commit()
+    conn.close()
+
+    mem = SQLiteMemory(path)
+    assert mem.history()[0].native_content is None
+    mem.add(Message(role="assistant", content="x", native_content=[{"type": "text", "text": "x"}], native_provider="anthropic"))
+    assert mem.history()[1].native_content == [{"type": "text", "text": "x"}]
+
+
+def test_request_options_defaults():
+    from agent_kit import ClearToolResults, Compaction
+    from agent_kit.types import RequestOptions
+
+    assert RequestOptions().is_default()
+    assert RequestOptions().prompt_caching is True
+    assert not RequestOptions(effort="high").is_default()
+    assert Compaction().trigger_tokens == 150_000
+    assert (ClearToolResults().trigger_tokens, ClearToolResults().keep) == (100_000, 3)

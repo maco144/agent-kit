@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 import sqlite3
 
 from agent_kit.memory.in_memory import InMemoryStore
@@ -78,3 +80,49 @@ def test_sqlite_migrates_database_without_tool_calls_column(tmp_path):
         Message(role="assistant", content="", tool_calls=[ToolCall(tool_name="t", arguments={}, call_id="x")])
     )
     assert mem.history()[1].tool_calls[0].call_id == "x"
+
+
+def _history(n: int) -> list[Message]:
+    msgs: list[Message] = []
+    for i in range(n):
+        msgs.append(Message(role="user", content=f"q{i}"))
+        msgs.extend(_exchange(i))
+        msgs.append(Message(role="assistant", content=f"a{i}"))
+    return msgs
+
+
+@pytest.mark.parametrize("make", [lambda tmp: InMemoryStore(), lambda tmp: SQLiteMemory(tmp / "t.db")])
+def test_stores_default_to_no_window(make, tmp_path):
+    mem = make(tmp_path)
+    mem.add_many(_history(30))
+    assert len(mem.history()) == 120
+
+
+@pytest.mark.parametrize("make", [lambda tmp: InMemoryStore(), lambda tmp: SQLiteMemory(tmp / "t.db")])
+def test_trim_oldest_cuts_at_a_user_turn(make, tmp_path):
+    mem = make(tmp_path)
+    mem.add(Message(role="system", content="sys"))
+    mem.add_many(_history(3))  # q0 call0 tool0 a0 | q1 ... | q2 ...
+
+    removed = mem.trim_oldest(2)  # would start mid-exchange; extends to the next user turn
+
+    assert removed == 4
+    history = mem.history()
+    assert [m.content for m in history[:2]] == ["sys", "q1"]
+    assert mem.trim_oldest(0) == 0
+
+
+@pytest.mark.parametrize("make", [lambda tmp: InMemoryStore(), lambda tmp: SQLiteMemory(tmp / "t.db")])
+def test_trim_oldest_keeps_latest_user_turn_and_tool_pairs(make, tmp_path):
+    mem = make(tmp_path)
+    mem.add(Message(role="user", content="go"))
+    for i in range(4):
+        mem.add_many(_exchange(i))
+
+    removed = mem.trim_oldest(6)
+
+    history = mem.history()
+    assert history[0].content == "go"
+    assert removed == 6
+    assert [m.role for m in history[1:]] == ["assistant", "tool"]
+    assert history[1].tool_calls[0].call_id == history[2].tool_call_id

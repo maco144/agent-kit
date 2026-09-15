@@ -37,6 +37,8 @@ class Message(BaseModel):
     tool_call_id: str | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)  # assistant turns only
     metadata: dict[str, Any] = Field(default_factory=dict)
+    native_content: list[dict[str, Any]] | None = None  # assistant blocks exactly as the provider returned them
+    native_provider: str | None = None  # provider.name() that produced native_content
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +95,7 @@ class Turn(BaseModel):
     cost: CostSummary = Field(default_factory=CostSummary)
     duration_ms: int = 0
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+    context_events: list[dict[str, Any]] = Field(default_factory=list)  # server-side context management
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +152,35 @@ class CircuitBreakerConfig(BaseModel):
     recovery_timeout_s: float = 60.0
     success_threshold: int = 2  # successes in half-open before closing
 
+
+class Compaction(BaseModel):
+    """Anthropic server-side compaction: summarise earlier context past a token threshold."""
+
+    trigger_tokens: int = 150_000  # API minimum 50_000
+    instructions: str | None = None  # replaces the default summarisation prompt
+
+
+class ClearToolResults(BaseModel):
+    """Anthropic context editing: clear old tool results past a token threshold."""
+
+    trigger_tokens: int = 100_000
+    keep: int = 3  # most recent tool uses kept
+    exclude_tools: list[str] = Field(default_factory=list)
+    clear_inputs: bool = False  # also clear tool_use inputs
+
+
+class RequestOptions(BaseModel):
+    """Per-request model settings AgentLoop passes to providers that support them."""
+
+    thinking: Literal["adaptive", "disabled"] | None = None
+    effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
+    prompt_caching: bool = True
+    compaction: Compaction | None = None
+    clear_tool_results: ClearToolResults | None = None
+    provider_options: dict[str, Any] = Field(default_factory=dict)
+
+    def is_default(self) -> bool:
+        return self == RequestOptions()
 
 # ---------------------------------------------------------------------------
 # Observability

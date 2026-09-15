@@ -16,12 +16,13 @@ class InMemoryStore:
 
     Usage::
 
-        mem = InMemoryStore(window=50)
+        mem = InMemoryStore()           # no count cap (Agent trims by token budget)
+        mem = InMemoryStore(window=50)  # cap on message count, applied on append
         mem.add(Message(role="user", content="Hello"))
         history = mem.history()
     """
 
-    def __init__(self, window: int = 50) -> None:
+    def __init__(self, window: int | None = None) -> None:
         self._window = window
         self._messages: list[Message] = []
 
@@ -41,8 +42,18 @@ class InMemoryStore:
     def clear(self) -> None:
         self._messages = []
 
+    def trim_oldest(self, count: int) -> int:
+        """Remove at least ``count`` oldest non-system messages at a tool-safe boundary; return how many."""
+        if count <= 0:
+            return 0
+        system = [m for m in self._messages if m.role == "system"]
+        non_system = [m for m in self._messages if m.role != "system"]
+        kept = window_indices([m.role for m in non_system], max(0, len(non_system) - count))
+        self._messages = system + [non_system[i] for i in kept]
+        return len(non_system) - len(kept)
+
     def _trim(self) -> None:
-        if len(self._messages) <= self._window:
+        if self._window is None or len(self._messages) <= self._window:
             return
         # Keep all system messages; trim non-system without orphaning tool results
         system = [m for m in self._messages if m.role == "system"]

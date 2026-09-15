@@ -16,7 +16,7 @@ Quick start::
 
 from agent_kit.agent.agent import Agent, AgentConfig
 from agent_kit.tools.base import Tool, tool
-from agent_kit.types import AgentResult, Message, ToolResult, Turn
+from agent_kit.types import AgentResult, ClearToolResults, Compaction, Message, ToolResult, Turn
 
 __version__ = "0.3.0"
 
@@ -25,6 +25,8 @@ __all__ = [
     # Core primitives
     "Agent",
     "AgentConfig",
+    "Compaction",
+    "ClearToolResults",
     "Tool",
     "tool",
     # Result types
