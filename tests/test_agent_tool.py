@@ -11,11 +11,13 @@ from pydantic import BaseModel
 
 from agent_kit import SUSPEND, Agent, AgentConfig, tool
 from agent_kit.agent.delegation import AgentTool, DelegationContext, child_run_id
+from agent_kit.cloud.models import CloudEvent
+from agent_kit.cloud.reporter import CloudReporter
 from agent_kit.durable import SQLiteRunStore
 from agent_kit.exceptions import BudgetExceededError, RunConflictError, RunStoppedByHookError
-from agent_kit.hooks import Decision, Hooks, require_approval
+from agent_kit.hooks import Decision, Hooks, deny_tools, require_approval
 from agent_kit.providers.base import ProviderConfig
-from agent_kit.types import CostSummary, Message, RetryPolicyConfig, ToolCall, Turn
+from agent_kit.types import AgentResult, CostSummary, Message, RetryPolicyConfig, ToolCall, Turn
 
 
 class SimulatedCrash(BaseException):
@@ -249,3 +251,170 @@ async def test_concurrent_resumes_of_one_child_conflict(db):
     outcomes = await asyncio.gather(resume(), resume(), return_exceptions=True)
     assert sum(isinstance(o, RunConflictError) for o in outcomes) == 1
     assert executed == ["refund:1"]
+
+
+# --- Delegation inside the loop --------------------------------------------------------------------
+
+
+def lead(db, provider: Scripted, *children: AgentTool, approver: Any = SUSPEND, **config: Any) -> Agent:
+    """A parent over a fresh store connection — stands in for another process."""
+    return Agent(provider, tools=list(children), config=AgentConfig(
+        run_store=SQLiteRunStore(db), approver=approver, retry_policy=NO_RETRY, **config))
+
+
+def audit_spy(agent: Agent) -> list[tuple[str, dict[str, Any]]]:
+    assert agent.audit is not None
+    recorded: list[tuple[str, dict[str, Any]]] = []
+    original = agent.audit.append
+
+    def spy(event_type: str, actor: str, payload: dict[str, Any] | None = None) -> Any:
+        recorded.append((event_type, payload or {}))
+        return original(event_type, actor, payload)
+
+    agent.audit.append = spy  # type: ignore[method-assign]
+    return recorded
+
+
+def recording_reporter(agent_name: str) -> tuple[CloudReporter, list[CloudEvent]]:
+    reporter = CloudReporter(api_key="akt_test", project="proj", agent_name=agent_name)
+    events: list[CloudEvent] = []
+
+    async def enqueue(event: CloudEvent) -> None:
+        events.append(event)
+
+    reporter._enqueue = enqueue  # type: ignore[method-assign]
+    return reporter, events
+
+
+async def test_parallel_delegations_run_in_fresh_memory():
+    child_provider = Scripted(final("a"), final("b"))
+    child = Agent(child_provider)
+    parent_provider = Scripted(calls(("research", {"task": "q1"}), ("research", {"task": "q2"})), final("summary"))
+
+    result = await Agent(parent_provider, tools=[child.as_tool("research", "Investigate.")]).run("go")
+
+    assert result.output == "summary"
+    assert sorted([m.content for m in request] for request in child_provider.requests) == [["q1"], ["q2"]]
+    assert sorted(m.content for m in tool_messages(parent_provider)) == ['"a"', '"b"']
+    assert len(child.memory) == 0
+
+
+async def test_typed_child_output_reaches_the_parent_as_json():
+    review = Agent(Scripted(final('{"approved": true}'))).as_tool("review", "Review.", output_type=Verdict)
+    parent_provider = Scripted(calls(("review", {"task": "check"})), final("ok"))
+    await Agent(parent_provider, tools=[review]).run("go")
+    assert tool_messages(parent_provider)[0].content == '{"approved": true}'
+
+
+async def test_parent_policy_applies_inside_the_child():
+    child_provider = Scripted(calls(("refund", {"order_id": "1"})), final("could not refund"))
+    refunds = Agent(child_provider, tools=[refund]).as_tool("refunds", "Refunds.")
+    parent = Agent(Scripted(calls(("refunds", {"task": "refund 1"})), final("ok")), tools=[refunds],
+                   config=AgentConfig(hooks=Hooks(before_tool=[deny_tools("refund", reason="refunds frozen")])))
+
+    await parent.run("go")
+
+    assert executed == []
+    assert [m.content for m in tool_messages(child_provider)] == ["Error: Tool call denied: refunds frozen"]
+
+
+async def test_child_spend_rolls_into_the_parent_totals():
+    child = Agent(Scripted(final("findings", cost=0.02)))
+    parent = Agent(Scripted(calls(("research", {"task": "q"})), final("ok")), tools=[child.as_tool("research", "I.")])
+    result = await parent.run("go")
+    assert result.total_cost_usd == pytest.approx(0.04)
+    assert result.total_tokens == 20
+
+
+async def test_child_spend_trips_the_parent_cap_before_its_next_model_call():
+    child = Agent(Scripted(final("findings", cost=0.02)))
+    parent_provider = Scripted(calls(("research", {"task": "q"})), final("never"))
+    parent = Agent(parent_provider, tools=[child.as_tool("research", "I.")], config=AgentConfig(max_run_cost_usd=0.025))
+
+    with pytest.raises(BudgetExceededError) as exc:
+        await parent.run("go")
+
+    assert exc.value.spent_usd == pytest.approx(0.03)
+    assert len(parent_provider.requests) == 1
+
+
+async def test_delegation_is_audited_with_the_child_root_hash(db):
+    research = Agent(Scripted(final("findings"))).as_tool("research", "Investigate.")
+    parent = lead(db, Scripted(calls(("research", {"task": "q"})), final("ok")), research, approver=None)
+    recorded = audit_spy(parent)
+
+    await parent.run("go", run_id="lead-1")
+
+    (payload,) = [p for event, p in recorded if event == "tool_call"]
+    child = await SQLiteRunStore(db).load(child_run_id("lead-1", "research-0"))
+    assert child is not None and child.result is not None
+    assert payload["delegated_run_id"] == child.run_id
+    assert payload["delegated_root_hash"] == child.result["audit_root_hash"]
+    assert payload["delegated_cost_usd"] == pytest.approx(0.01)
+    assert (child.parent_run_id, child.parent_call_id) == ("lead-1", "research-0")
+    assert parent.audit is not None and parent.audit.verify()
+
+
+async def test_child_reports_as_its_own_run_linked_to_the_parent():
+    reporter, events = recording_reporter("lead")
+    research = Agent(Scripted(final("findings"))).as_tool("research", "Investigate.")
+    parent = Agent(Scripted(calls(("research", {"task": "q"})), final("ok")), tools=[research],
+                   config=AgentConfig(cloud=reporter))
+
+    result = await parent.run("go")
+
+    assert result.run_id is not None
+    child_id = child_run_id(result.run_id, "research-0")
+    starts = {e.run_id: e.payload for e in events if e.event_type.value == "run_start"}
+    assert starts[child_id]["parent_run_id"] == result.run_id
+    assert "parent_run_id" not in starts[result.run_id]
+    assert {e.run_id for e in events if e.event_type.value == "run_complete"} == {result.run_id, child_id}
+
+
+async def test_stream_yields_only_the_parent_text():
+    research = Agent(Scripted(final("child text"))).as_tool("research", "Investigate.")
+    parent = Agent(Scripted(calls(("research", {"task": "q"})), final("summary")), tools=[research])
+    assert [c async for c in parent.stream("go")] == ["summary"]
+
+
+async def test_nested_delegation_and_depth_limit():
+    def desk(max_depth: int) -> tuple[Agent, Scripted]:
+        refunds = Agent(Scripted(final("refunded"))).as_tool("refunds", "Refunds.")
+        desk_provider = Scripted(calls(("refunds", {"task": "refund 7"})), final("desk done"))
+        desk_tool = Agent(desk_provider, tools=[refunds]).as_tool("desk", "Front desk.")
+        parent_provider = Scripted(calls(("desk", {"task": "ticket"})), final("closed"))
+        return Agent(parent_provider, tools=[desk_tool], config=AgentConfig(max_delegation_depth=max_depth)), desk_provider
+
+    parent, _ = desk(5)
+    result = await parent.run("go")
+    assert result.output == "closed"
+    assert result.total_cost_usd == pytest.approx(0.05)
+
+    shallow, desk_provider = desk(1)
+    await shallow.run("go")
+    assert [m.content for m in tool_messages(desk_provider)] == ["Error: delegation depth limit (1) exceeded"]
+
+
+async def ticket_run(db) -> tuple[Agent, AgentResult[Any]]:
+    """Lead calls research (completes) and refunds (suspends on its refund approval) in one turn."""
+    research = Agent(Scripted(final("findings", cost=0.02))).as_tool("research", "Investigate.")
+    refunds = refunds_agent(Scripted(calls(("refund", {"order_id": "42"})))).as_tool("refunds", "Refunds.")
+    first = lead(db, Scripted(calls(("research", {"task": "why"}), ("refunds", {"task": "refund 42"}))), research, refunds)
+    return first, await first.run("handle ticket", run_id="lead-1")
+
+
+async def test_suspended_child_suspends_the_parent(db):
+    _, result = await ticket_run(db)
+
+    child_id = child_run_id("lead-1", "refunds-1")
+    assert (result.status, executed) == ("suspended", [])
+    assert [(p.call_id, p.tool_name, p.arguments, p.run_id) for p in result.pending_approvals] == [
+        ("refunds-1/refund-0", "refund", {"order_id": "42"}, child_id)
+    ]
+    assert result.total_cost_usd == pytest.approx(0.03)  # research 0.02 + the suspended child's 0.01
+    stored = await SQLiteRunStore(db).load("lead-1")
+    assert stored is not None and stored.pending is not None
+    assert stored.status == "suspended" and set(stored.pending.results) == {"research-0"}
+    assert stored.pending.delegated_cost_usd == {"research-0": pytest.approx(0.02), "refunds-1": pytest.approx(0.01)}
+    child = await SQLiteRunStore(db).load(child_id)
+    assert child is not None and child.status == "suspended"

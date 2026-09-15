@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
+from agent_kit.agent.delegation import AgentTool, Delegation, DelegationContext, child_run_id
 from agent_kit.audit.chain import AuditChain
 from agent_kit.durable import Checkpointer, PendingTurn, RunCheckpoint, RunStatus, RunStore
 from agent_kit.exceptions import (
@@ -146,7 +147,7 @@ class AgentLoop:
         self._prompt = ""
         self._output_type_name: str | None = None
         self._pending: PendingTurn | None = None  # the model turn whose tool calls are being resolved
-        self._suspended: dict[str, PendingApproval] = {}  # calls parked by approver=SUSPEND this turn
+        self._suspended: dict[str, list[PendingApproval]] = {}  # calls parked by approver=SUSPEND this turn
         self.result: AgentResult[Any] | None = None
 
     async def run(
@@ -594,12 +595,12 @@ class AgentLoop:
             else:
                 result = await self._run_tool(tc, turn_number)
             if result is None:
-                pending.approvals.append(self._suspended.pop(tc.call_id))
+                pending.approvals.extend(self._suspended.pop(tc.call_id))
             else:
                 pending.results[tc.call_id] = result
 
         await asyncio.gather(*(resolve(tc) for tc in pending.turn.tool_calls))
-        pending.approvals.sort(key=lambda a: order[a.call_id])
+        pending.approvals.sort(key=lambda a: order[a.call_id.split("/", 1)[0]])
         return list(pending.approvals)
 
     def _record_tool_results(self, pending: PendingTurn) -> None:
@@ -608,16 +609,18 @@ class AgentLoop:
         for tc in turn.tool_calls:
             tool_result = pending.results[tc.call_id]
             if self._audit:
-                self._audit.append(
-                    "tool_call",
-                    actor=tc.tool_name,
-                    payload={
-                        "call_id": tc.call_id,
-                        "success": tool_result.error is None,
-                        "error": tool_result.error,
-                        "duration_ms": tool_result.duration_ms,
-                    },
-                )
+                payload: dict[str, Any] = {
+                    "call_id": tc.call_id,
+                    "success": tool_result.error is None,
+                    "error": tool_result.error,
+                    "duration_ms": tool_result.duration_ms,
+                }
+                if tc.call_id in pending.delegated_cost_usd:
+                    payload["delegated_run_id"] = child_run_id(self._run_id, tc.call_id)
+                    payload["delegated_cost_usd"] = pending.delegated_cost_usd[tc.call_id]
+                    if tc.call_id in pending.delegated_root_hash:
+                        payload["delegated_root_hash"] = pending.delegated_root_hash[tc.call_id]
+                self._audit.append("tool_call", actor=tc.tool_name, payload=payload)
             output_str = (
                 f"Error: {tool_result.error}"
                 if tool_result.error
@@ -651,13 +654,20 @@ class AgentLoop:
 
     async def _mark_started(self, call_id: str) -> None:
         if self._pending is not None:
+            if call_id in self._pending.started:
+                return
             self._pending.started.append(call_id)
         if self._checkpointer is not None:
             await self._checkpointer.mark_started(call_id)  # B
 
     def _totals(self) -> tuple[float, int]:
-        """Cost and tokens of this run's turns (the tracer's totals span every run on the agent)."""
-        return sum(t.cost.cost_usd for t in self._turns), sum(t.cost.total_tokens for t in self._turns)
+        """Cost and tokens of this run's turns and the delegated runs they started."""
+        cost = sum(t.cost.cost_usd + sum(r.cost_usd for r in t.tool_results) for t in self._turns)
+        tokens = sum(t.cost.total_tokens + sum(r.tokens for r in t.tool_results) for t in self._turns)
+        if self._pending is not None:  # delegations of the unresolved turn
+            cost += sum(self._pending.delegated_cost_usd.values())
+            tokens += sum(self._pending.delegated_tokens.values())
+        return cost, tokens
 
     def spend(self) -> tuple[float, int]:
         """This run's cost and tokens so far, delegated runs included — also for a run that raised."""
@@ -753,7 +763,9 @@ class AgentLoop:
         ).__aiter__()
         return it, await anext(it, None)
 
-    async def _run_tool(self, tc: ToolCall, turn: int, gate: bool = True) -> ToolResult | None:
+    async def _run_tool(
+        self, tc: ToolCall, turn: int, gate: bool = True, approvals: dict[str, bool] | None = None
+    ) -> ToolResult | None:
         """Gate, execute, and filter one tool call inside its span. None when parked for approval."""
         with self._tracer.span(f"tool.{tc.tool_name}", kind=SpanKind.TOOL, tool=tc.tool_name) as tool_span:
             t0 = time.monotonic()
@@ -779,10 +791,16 @@ class AgentLoop:
                     tool_result = failed(f"Tool call denied: {denial}")
                 else:
                     await self._mark_started(tc.call_id)
-                    try:
-                        tool_result = await tool(call_id=tc.call_id, **tc.arguments)
-                    except Exception as exc:
-                        tool_result = failed(str(exc))
+                    if isinstance(tool, AgentTool):
+                        delegated = await self._delegate(tool, tc, turn, approvals or {})
+                        if delegated is None:
+                            return None  # the child run suspended; its approvals are parked under this call
+                        tool_result = delegated
+                    else:
+                        try:
+                            tool_result = await tool(call_id=tc.call_id, **tc.arguments)
+                        except Exception as exc:
+                            tool_result = failed(str(exc))
                     tool_result = await self._filter_output(tc, turn, tool_result)
 
             tool_span.set_attribute("duration_ms", tool_result.duration_ms)
@@ -790,6 +808,47 @@ class AgentLoop:
 
         self._tracer.record_tool_call(tc.tool_name, tool_result.duration_ms, tool_result.error is None)
         return tool_result
+
+    async def _delegate(
+        self, tool: AgentTool, tc: ToolCall, turn: int, approvals: dict[str, bool]
+    ) -> ToolResult | None:
+        """Run a delegated child run. None when it suspended — its approvals are parked under this call."""
+        remaining = (
+            None if self._max_run_cost_usd is None else max(0.0, self._max_run_cost_usd - self._run_cost_usd)
+        )
+        ctx = DelegationContext(
+            parent_run_id=self._run_id,
+            call_id=tc.call_id,
+            depth=self._delegation_depth + 1,
+            max_depth=self._max_delegation_depth,
+            context=self._context,
+            hooks=self._hooks,
+            approver=self._approver,
+            approval_timeout_s=self._approval_timeout_s,
+            run_store=self._checkpointer.store if self._checkpointer is not None else None,
+            remaining_cost_usd=remaining,
+            budget_guard=self._budget_guard,
+            reporter=self._reporter,
+            approvals=approvals,
+        )
+        delegation = await tool.delegate(str(tc.arguments.get("task", "")), ctx)
+        self._add_delegated_spend(tc.call_id, delegation)
+        if delegation.status == "suspended":
+            self._suspended[tc.call_id] = delegation.approvals
+            return None
+        assert delegation.result is not None
+        return delegation.result
+
+    def _add_delegated_spend(self, call_id: str, delegation: Delegation) -> None:
+        """Add the child's spend not yet counted in this run; remember the child's root hash."""
+        if delegation.run_id is None or self._pending is None:
+            return
+        pending = self._pending
+        self._run_cost_usd += delegation.cost_usd - pending.delegated_cost_usd.get(call_id, 0.0)
+        pending.delegated_cost_usd[call_id] = delegation.cost_usd
+        pending.delegated_tokens[call_id] = delegation.tokens
+        if delegation.root_hash is not None:
+            pending.delegated_root_hash[call_id] = delegation.root_hash
 
     async def _gate_tool(self, tc: ToolCall, turn: int) -> str | None:
         """Run before_tool hooks. Returns a denial reason, or None to execute."""
@@ -812,13 +871,15 @@ class AgentLoop:
         if self._approver is None:
             return self._deny_tool(ctx, "before_tool", "approval required but no approver is configured")
         if isinstance(self._approver, Suspend):
-            self._suspended[ctx.call_id] = PendingApproval(
-                call_id=ctx.call_id,
-                tool_name=ctx.tool_name,
-                arguments=dict(ctx.arguments),
-                reason=reason,
-                turn=ctx.turn,
-            )
+            self._suspended[ctx.call_id] = [
+                PendingApproval(
+                    call_id=ctx.call_id,
+                    tool_name=ctx.tool_name,
+                    arguments=dict(ctx.arguments),
+                    reason=reason,
+                    turn=ctx.turn,
+                )
+            ]
             return None
         request = ApprovalRequest(
             run_id=ctx.run_id,
