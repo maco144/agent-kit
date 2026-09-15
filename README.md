@@ -22,14 +22,16 @@ demo — running agents you can trust, afford, and prove things about:
 | Cost circuit breaker | Per-run caps and daily / weekly / monthly fleet budgets stop agents before the next model call, and alert when tripped |
 | MCP tools | Tools from any MCP server over stdio or streamable HTTP, governed by the same allowlist, hooks, budgets, and audit |
 | Hooks and approval gates | Block tools, require human approval, redact tool output, or stop runs — fail-closed, every decision audited |
+| Agents as tools | Delegate to child agents that can't escape the parent's policy, budget, or approvals — child audit chains are hash-committed into the parent's |
+| Durable runs | Checkpoints at every turn: resume after crashes, suspend for human approval, never run a side effect twice |
 | Evidence bundles | Signed exports of audit chains that anyone can verify offline (`agent-kit verify`), with retention, legal holds, and signed deletion receipts |
 | Self-hostable ops backend | Fleet metrics, alerting (Slack, PagerDuty, webhook, SMTP), and SLA context — see [agent-kit Cloud](#agent-kit-cloud) |
 | Provider-neutral | Anthropic, OpenAI, Ollama, and any OpenAI-compatible endpoint behind one interface |
 | OpenTelemetry | No-op by default; console JSON or OTLP export when you want it |
 
 Tool calls run in parallel, and `agent.stream()` runs the same loop as `agent.run()` — tools, retry,
-circuit breaking, and audit included. Not yet: MCP tools, typed outputs, approval hooks, and resumable
-runs — tracked in [specs/06-harness-roadmap.md](specs/06-harness-roadmap.md).
+circuit breaking, and audit included. Typed results, context management, and MCP tools are built in too. Not
+yet: handoffs and tool-output injection scanning — tracked in [specs/06-harness-roadmap.md](specs/06-harness-roadmap.md).
 
 ---
 
@@ -517,6 +519,47 @@ result = await agent.resume("ticket-9913", approvals={call_id: True})
 
 `RunStore` is a small async protocol (`save` / `load` / `mark_tool_started` / `list` / `delete`), so Postgres
 or Redis stores drop in. Full example: [`examples/durable_approval.py`](examples/durable_approval.py).
+
+---
+
+## Agents as tools
+
+Turn any agent into a tool another agent can delegate to:
+
+```python
+research = Agent(provider, tools=[lookup_order]).as_tool("research", "Look up facts about orders.")
+refunds = Agent(provider, tools=[issue_refund], config=AgentConfig(
+    hooks=Hooks(before_tool=[require_approval("issue_refund")]),
+)).as_tool("refunds", "Handle a refund request.", output_type=RefundOutcome)
+
+lead = Agent(provider, tools=[research, refunds], config=AgentConfig(
+    run_store=SQLiteRunStore("runs.db"),
+    approver=SUSPEND,
+    hooks=Hooks(before_tool=[deny_tools("close_account", reason="manual only")]),
+    max_run_cost_usd=1.00,
+))
+```
+
+The model calls `refunds` with a `task`; every call is a fresh child run with its own memory and audit chain,
+so the same agent tool can run several times in one turn. Delegation cannot escape the parent run:
+
+| The child keeps | The child inherits from the calling run |
+|---|---|
+| provider, model, tools, `allowed_tools`, system prompt, turn limit, retry, circuit breaker, context settings | hooks (run **after** the child's own — any deny wins), approver, run store, and whatever is left of `max_run_cost_usd` |
+
+- **Approvals bubble up.** When `issue_refund` asks for approval inside `refunds`, the lead run suspends and
+  `result.pending_approvals` lists it as `"<refunds call>/<issue_refund call>"`.
+  `lead.resume(run_id, approvals={that_id: True})` resumes the child and then the lead.
+- **One budget.** Child spend counts toward the lead's `max_run_cost_usd` before its next model call and is
+  included in `total_cost_usd`.
+- **Linked audit.** The lead's `tool_call` event records the child's `delegated_run_id` and final
+  `delegated_root_hash`, so tampering with a child chain shows from the parent. Child runs report to
+  agent-kit Cloud as their own runs with `parent_run_id`.
+- **Crash-safe.** A delegation interrupted by a crash resumes the child from its checkpoint.
+- Parent policies match tool names, and they see the child's tools: `allow_only(...)` on a lead must list the
+  child tools it permits, too. Nesting is limited by `AgentConfig(max_delegation_depth=5)`.
+
+For a fixed graph of agents, use `DAGOrchestrator`. Full example: [`examples/delegation.py`](examples/delegation.py).
 
 ---
 

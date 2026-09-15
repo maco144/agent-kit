@@ -1,6 +1,6 @@
 # Project Index: agent-kit
 
-Generated: 2026-09-15 · SDK `agent-kit` **v0.3.0** (unreleased changes in CHANGELOG) · server `agentkit-cloud-server` v0.1.0 · Rising Sun License v1.0 · Python ≥3.11
+Generated: 2026-09-15 (updated for agents as tools) · SDK `agent-kit` **v0.3.0** (unreleased changes in CHANGELOG) · server `agentkit-cloud-server` v0.1.0 · Rising Sun License v1.0 · Python ≥3.11
 
 ## 📁 Project Structure
 
@@ -15,8 +15,9 @@ agent-kit/
 │   ├── compliance.py           # verify_bundle, load_public_keys (offline evidence verification)
 │   ├── cli.py                  # `agent-kit verify`
 │   ├── agent/
-│   │   ├── agent.py            # Agent + AgentConfig
-│   │   └── loop.py             # AgentLoop: retry → circuit breaker → hooks → provider → tools → audit → checkpoint → cloud
+│   │   ├── agent.py            # Agent + AgentConfig; as_tool()
+│   │   ├── delegation.py       # AgentTool, DelegationContext, Delegation, child_run_id, stack_hooks
+│   │   └── loop.py             # AgentLoop: retry → circuit breaker → hooks → provider → tools/delegations → audit → checkpoint → cloud
 │   ├── durable/                # models.py (RunCheckpoint, PendingTurn, RunSummary), store.py (RunStore, SQLiteRunStore CAS), checkpointer.py
 │   ├── providers/              # base.py, anthropic.py (default), openai.py, ollama.py, pricing.py (longest-prefix lookup)
 │   ├── tools/                  # base.py (Tool, @tool), registry.py (allowlist), mcp.py (MCPToolset, stdio(), http())
@@ -39,10 +40,10 @@ agent-kit/
 │   │   └── compliance/         # signing.py (Ed25519 + rotation), bundle.py, retention.py (holds, purge, receipts)
 │   ├── migrations/versions/    # 001–007
 │   └── tests/                  # 10 test files + conftest + otlp_helpers
-├── tests/                      # 23 SDK test files + conftest + fixtures/mcp_fixture_server.py
-├── examples/                   # 13 runnable scripts + README
-├── docs/                       # 4 cloud docs + superpowers/plans/ (10 implementation plans)
-├── specs/                      # 00–15
+├── tests/                      # 24 SDK test files + conftest + fixtures/mcp_fixture_server.py
+├── examples/                   # 14 runnable scripts + README
+├── docs/                       # 4 cloud docs + superpowers/plans/ (11 implementation plans)
+├── specs/                      # 00–16
 └── .github/workflows/ci.yml
 ```
 
@@ -53,13 +54,13 @@ agent-kit/
 | SDK public API | `agent_kit/__init__.py` |
 | CLI | `agent-kit` → `agent_kit.cli:main` (`verify` subcommand) |
 | Cloud server | `server/app/main.py` — `uvicorn app.main:app` |
-| SDK tests | `pytest` — 267 tests |
+| SDK tests | `pytest` — 298 tests |
 | Server tests | `cd server && pytest` — 160 tests |
 
 ## 📦 SDK Surface
 
 ### `Agent` / `AgentConfig` (`agent_kit/agent/agent.py`)
-- `Agent(provider, tools=, config=, memory=)`; `add_tool()`, `audit`, `tracer`, `memory`, `last_result`
+- `Agent(provider, tools=, config=, memory=)`; `add_tool()`, `as_tool(name, description, output_type=?)`, `config`, `audit`, `tracer`, `memory`, `last_result`
 - `run(prompt, output_type=?, run_id=?) -> AgentResult[T]` · `stream(prompt)` · `resume(run_id, approvals=?, output_type=?)` · `resume_stream(...)` (sets `last_result` when exhausted)
 - `AgentConfig` groups:
   - **Core**: `model`, `system_prompt`, `max_turns=20`, `max_tokens_per_turn=4096`, `allowed_tools`
@@ -69,6 +70,7 @@ agent-kit/
   - **Typed**: `output_retries=2`
   - **Context**: `thinking`, `effort`, `prompt_caching=True`, `compaction`, `clear_tool_results`, `provider_options`, `context_budget_tokens=150_000`, `memory_window=None`
   - **Durable**: `run_store`
+  - **Delegation**: `max_delegation_depth=5`
 
 ### Feature map
 
@@ -86,12 +88,13 @@ agent-kit/
 | Typed results | `output.py` | `run(prompt, output_type=Model).parsed` | 13 | `typed_output.py` |
 | Context management | `memory/budget.py`, `memory/window.py`, `providers/anthropic.py` | `Compaction`, `ClearToolResults`, `context_budget_tokens` | 14 | `long_running_agent.py` |
 | Durable runs | `durable/` | `run_store=SQLiteRunStore("runs.db")`, `approver=SUSPEND`, `resume()` | 15 | `durable_approval.py` |
+| Agents as tools | `agent/delegation.py`, `agent/loop.py` | `child.as_tool("research", "...")`; approvals bubble as `call/child_call` | 16 | `delegation.py` |
 
 ### Providers
-`AnthropicProvider` (default; native content round-trip, caching, thinking, compaction, `output_config.format`) · `OpenAIProvider` (`[openai]`, `response_format`) · `OllamaProvider` (httpx) — all subclass `BaseProvider` with `complete()`, `stream()`, `name()`, `supports_structured_output`.
+`AnthropicProvider` (default; native content round-trip, caching, thinking, compaction, `output_config.format`) · `OpenAIProvider` (`[openai]`, `response_format`) · `OllamaProvider` (imports `openai`; the `[ollama]` extra does not install it) — all subclass `BaseProvider` with `complete()`, `stream()`, `name()`, `supports_structured_output`.
 
 ### Audit event types (client chain)
-`agent_start`, `llm_complete`, `tool_call`, `agent_complete`, `circuit_breaker_state_change`, `budget_exceeded` · hooks: `tool_denied`, `llm_call_denied`, `tool_output_replaced`, `approval_{requested,granted,denied}` · `output_validation_failed` · `context_{trimmed,compacted,edited}` · durable: `run_suspended`, `run_resumed`, `tool_interrupted`.
+`agent_start`, `llm_complete`, `tool_call`, `agent_complete`, `circuit_breaker_state_change`, `budget_exceeded` · hooks: `tool_denied`, `llm_call_denied`, `tool_output_replaced`, `approval_{requested,granted,denied}` · `output_validation_failed` · `context_{trimmed,compacted,edited}` · durable: `run_suspended`, `run_resumed`, `tool_interrupted`. Delegations add `delegated_run_id` / `delegated_root_hash` / `delegated_cost_usd` to `tool_call`; child `run_start` carries `parent_run_id`.
 Cloud wire `EventType`: `run_start`, `turn_complete`, `run_complete`, `run_error`, `circuit_state_change`, `audit_flush`.
 
 ## 📦 Cloud Server API
@@ -139,12 +142,12 @@ Cloud wire `EventType`: `run_start`, `turn_complete`, `run_complete`, `run_error
 
 - `README.md` — quick start + a section per feature (hooks, MCP, typed, context, durable); `CHANGELOG.md` — `[Unreleased]` holds everything since 0.2.0; `CONTRIBUTING.md`
 - `docs/` — `cloud-quickstart.md`, `self-hosting.md`, `api-reference.md` (covers traces, budgets, compliance), `troubleshooting.md`
-- `docs/superpowers/plans/` — implementation plans for tier-1 fundamentals, harness adapters, OTLP, cost breaker, compliance, hooks, MCP, typed results, context mgmt, durable runs
-- `specs/` — 00 platform · 01 audit trail · 02 fleet dashboard · 03 alerting · 04 SLA support · **05 dashboard UI (not built)** · 06 harness roadmap (tier status) · 07 harness adapters · 08 OTLP ingest · 09 cost breaker · 10 compliance exports · 11 hooks · 12 MCP client · 13 typed results · 14 context mgmt · 15 durable runs
+- `docs/superpowers/plans/` — implementation plans for tier-1 fundamentals, harness adapters, OTLP, cost breaker, compliance, hooks, MCP, typed results, context mgmt, durable runs, agents as tools
+- `specs/` — 00 platform · 01 audit trail · 02 fleet dashboard · 03 alerting · 04 SLA support · **05 dashboard UI (not built)** · 06 harness roadmap (tier status) · 07 harness adapters · 08 OTLP ingest · 09 cost breaker · 10 compliance exports · 11 hooks · 12 MCP client · 13 typed results · 14 context mgmt · 15 durable runs · 16 agents as tools
 
 ## 🧪 Tests
 
-**SDK (`tests/`, 267)** — agent, tools, retry, circuit_breaker, audit, pipeline, dag, sqlite_memory, memory_window, cloud_reporter, provider_requests (fake clients record kwargs), context_budget, budgets, compliance, output, typed_results, mcp (real fixture server, stdio + HTTP), hooks, run_store, durable_runs, integrations_{recorder,claude,openai_agents}. Loop tests use `MockProvider` from `conftest.py`.
+**SDK (`tests/`, 298)** — agent, tools, retry, circuit_breaker, audit, pipeline, dag, sqlite_memory, memory_window, cloud_reporter, provider_requests (fake clients record kwargs), context_budget, budgets, compliance, output, typed_results, mcp (real fixture server, stdio + HTTP), hooks, run_store, durable_runs, agent_tool (delegation, bubbling approvals, crash recovery), integrations_{recorder,claude,openai_agents}. Loop tests use `MockProvider` from `conftest.py`.
 
 **Server (`server/tests/`, 160)** — ingest, metrics, alerts, support, audit_chain_append, otlp_{decode,normalize,ingest}, budgets, compliance. Real in-process aiosqlite; never mock the DB.
 

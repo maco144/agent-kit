@@ -14,60 +14,348 @@
     "server_tests": "cd server && pytest"
   },
   "public_api": {
-    "agent_kit": ["Agent", "AgentConfig", "SUSPEND", "Compaction", "ClearToolResults", "Tool", "tool", "AgentResult", "Message", "Turn", "ToolResult"],
-    "agent_kit.providers": ["AnthropicProvider", "BaseProvider", "ProviderConfig"],
-    "agent_kit.providers.openai": ["OpenAIProvider"],
-    "agent_kit.providers.ollama": ["OllamaProvider"],
-    "agent_kit.tools": ["Tool", "tool", "ToolRegistry"],
-    "agent_kit.tools.mcp": ["MCPToolset", "StdioServer", "HttpServer", "stdio", "http", "require_approval_unless_read_only"],
-    "agent_kit.hooks": ["Hooks", "Decision", "ToolCallContext", "ToolResultContext", "LLMCallContext", "ApprovalRequest", "Suspend", "SUSPEND", "require_approval", "deny_tools", "allow_only"],
-    "agent_kit.output": ["OutputSpec", "OutputParseError"],
-    "agent_kit.durable": ["CHECKPOINT_SCHEMA_VERSION", "Checkpointer", "PendingTurn", "RunCheckpoint", "RunStatus", "RunStore", "RunSummary", "SQLiteRunStore"],
-    "agent_kit.memory": ["InMemoryStore", "SQLiteMemory"],
-    "agent_kit.orchestrator": ["LinearPipeline", "DAGOrchestrator", "DAGResult", "TaskNode"],
-    "agent_kit.cloud": ["CloudReporter"],
-    "agent_kit.cloud.budgets": ["BudgetGuard"],
-    "agent_kit.integrations.recorder": ["RunRecorder"],
-    "agent_kit.integrations.claude_agent_sdk": ["ClaudeAgentObserver"],
-    "agent_kit.integrations.openai_agents": ["AgentKitTraceProcessor", "AgentKitRunHooks"],
-    "agent_kit.compliance": ["verify_bundle", "load_public_keys", "BundleReport"],
-    "agent_kit.observability": ["AgentTracer"],
-    "agent_kit.types": ["ToolCall", "Message", "ToolSchema", "ToolResult", "CostSummary", "Turn", "PendingApproval", "AgentResult", "BackoffConfig", "RetryPolicyConfig", "CircuitBreakerConfig", "Compaction", "ClearToolResults", "RequestOptions", "SpanKind", "SpanEvent", "AuditEventRecord", "PipelineResult"]
+    "agent_kit": [
+      "Agent",
+      "AgentConfig",
+      "SUSPEND",
+      "Compaction",
+      "ClearToolResults",
+      "Tool",
+      "tool",
+      "AgentResult",
+      "Message",
+      "Turn",
+      "ToolResult"
+    ],
+    "agent_kit.providers": [
+      "AnthropicProvider",
+      "BaseProvider",
+      "ProviderConfig"
+    ],
+    "agent_kit.providers.openai": [
+      "OpenAIProvider"
+    ],
+    "agent_kit.providers.ollama": [
+      "OllamaProvider"
+    ],
+    "agent_kit.tools": [
+      "Tool",
+      "tool",
+      "ToolRegistry"
+    ],
+    "agent_kit.tools.mcp": [
+      "MCPToolset",
+      "StdioServer",
+      "HttpServer",
+      "stdio",
+      "http",
+      "require_approval_unless_read_only"
+    ],
+    "agent_kit.hooks": [
+      "Hooks",
+      "Decision",
+      "ToolCallContext",
+      "ToolResultContext",
+      "LLMCallContext",
+      "ApprovalRequest",
+      "Suspend",
+      "SUSPEND",
+      "require_approval",
+      "deny_tools",
+      "allow_only"
+    ],
+    "agent_kit.output": [
+      "OutputSpec",
+      "OutputParseError"
+    ],
+    "agent_kit.durable": [
+      "CHECKPOINT_SCHEMA_VERSION",
+      "Checkpointer",
+      "PendingTurn",
+      "RunCheckpoint",
+      "RunStatus",
+      "RunStore",
+      "RunSummary",
+      "SQLiteRunStore"
+    ],
+    "agent_kit.memory": [
+      "InMemoryStore",
+      "SQLiteMemory"
+    ],
+    "agent_kit.orchestrator": [
+      "LinearPipeline",
+      "DAGOrchestrator",
+      "DAGResult",
+      "TaskNode"
+    ],
+    "agent_kit.cloud": [
+      "CloudReporter"
+    ],
+    "agent_kit.cloud.budgets": [
+      "BudgetGuard"
+    ],
+    "agent_kit.integrations.recorder": [
+      "RunRecorder"
+    ],
+    "agent_kit.integrations.claude_agent_sdk": [
+      "ClaudeAgentObserver"
+    ],
+    "agent_kit.integrations.openai_agents": [
+      "AgentKitTraceProcessor",
+      "AgentKitRunHooks"
+    ],
+    "agent_kit.compliance": [
+      "verify_bundle",
+      "load_public_keys",
+      "BundleReport"
+    ],
+    "agent_kit.observability": [
+      "AgentTracer"
+    ],
+    "agent_kit.types": [
+      "ToolCall",
+      "Message",
+      "ToolSchema",
+      "ToolResult",
+      "CostSummary",
+      "Turn",
+      "PendingApproval",
+      "AgentResult",
+      "BackoffConfig",
+      "RetryPolicyConfig",
+      "CircuitBreakerConfig",
+      "Compaction",
+      "ClearToolResults",
+      "RequestOptions",
+      "SpanKind",
+      "SpanEvent",
+      "AuditEventRecord",
+      "PipelineResult"
+    ],
+    "agent_kit.agent": [
+      "Agent",
+      "AgentConfig",
+      "AgentTool"
+    ],
+    "agent_kit.agent.delegation": [
+      "AgentTool",
+      "DelegationContext",
+      "Delegation",
+      "child_run_id",
+      "stack_hooks",
+      "DELEGATION_NAMESPACE"
+    ]
   },
   "agent": {
-    "methods": ["run(prompt, output_type=None, run_id=None)", "stream(prompt)", "resume(run_id, approvals=None, output_type=None)", "resume_stream(run_id, approvals=None, output_type=None)", "add_tool(t)"],
-    "properties": ["audit", "tracer", "memory", "last_result"],
+    "methods": [
+      "run(prompt, output_type=None, run_id=None)",
+      "stream(prompt)",
+      "resume(run_id, approvals=None, output_type=None)",
+      "resume_stream(run_id, approvals=None, output_type=None)",
+      "as_tool(name, description, output_type=None)",
+      "add_tool(t)"
+    ],
+    "properties": [
+      "config",
+      "audit",
+      "tracer",
+      "memory",
+      "last_result"
+    ],
     "config": {
-      "core": ["model", "system_prompt", "max_turns=20", "max_tokens_per_turn=4096", "allowed_tools"],
-      "reliability": ["retry_policy", "circuit_breaker", "audit_enabled=True", "tracer"],
-      "cost": ["max_run_cost_usd", "enforce_budgets=False"],
-      "policy": ["hooks", "approver", "approval_timeout_s=300.0"],
-      "typed": ["output_retries=2"],
-      "context": ["thinking", "effort", "prompt_caching=True", "compaction", "clear_tool_results", "provider_options", "context_budget_tokens=150000", "memory_window=None"],
-      "durable": ["run_store"],
-      "cloud": ["cloud"]
+      "core": [
+        "model",
+        "system_prompt",
+        "max_turns=20",
+        "max_tokens_per_turn=4096",
+        "allowed_tools"
+      ],
+      "reliability": [
+        "retry_policy",
+        "circuit_breaker",
+        "audit_enabled=True",
+        "tracer"
+      ],
+      "cost": [
+        "max_run_cost_usd",
+        "enforce_budgets=False"
+      ],
+      "policy": [
+        "hooks",
+        "approver",
+        "approval_timeout_s=300.0"
+      ],
+      "typed": [
+        "output_retries=2"
+      ],
+      "context": [
+        "thinking",
+        "effort",
+        "prompt_caching=True",
+        "compaction",
+        "clear_tool_results",
+        "provider_options",
+        "context_budget_tokens=150000",
+        "memory_window=None"
+      ],
+      "durable": [
+        "run_store"
+      ],
+      "cloud": [
+        "cloud"
+      ],
+      "delegation": [
+        "max_delegation_depth=5"
+      ]
     }
   },
   "features": [
-    {"name": "hooks-approval-gates", "spec": "specs/11-hooks-approval-gates.md", "modules": ["agent_kit/hooks.py", "agent_kit/agent/loop.py"], "example": "examples/approval_gate.py"},
-    {"name": "mcp-client", "spec": "specs/12-mcp-client.md", "modules": ["agent_kit/tools/mcp.py"], "example": "examples/mcp_tools.py"},
-    {"name": "typed-results", "spec": "specs/13-typed-results.md", "modules": ["agent_kit/output.py"], "example": "examples/typed_output.py"},
-    {"name": "context-management", "spec": "specs/14-context-management.md", "modules": ["agent_kit/memory/budget.py", "agent_kit/memory/window.py", "agent_kit/providers/anthropic.py"], "example": "examples/long_running_agent.py"},
-    {"name": "durable-runs", "spec": "specs/15-durable-runs.md", "modules": ["agent_kit/durable/"], "example": "examples/durable_approval.py"},
-    {"name": "cost-circuit-breaker", "spec": "specs/09-cost-circuit-breaker.md", "modules": ["agent_kit/cloud/budgets.py", "server/app/budgets.py", "server/app/routers/budgets.py"]},
-    {"name": "compliance-exports", "spec": "specs/10-compliance-exports.md", "modules": ["agent_kit/compliance.py", "agent_kit/cli.py", "server/app/compliance/", "server/app/routers/compliance.py"]},
-    {"name": "otlp-ingest", "spec": "specs/08-otlp-ingest.md", "modules": ["server/app/otlp/", "server/app/routers/otlp.py"]},
-    {"name": "harness-adapters", "spec": "specs/07-harness-adapters.md", "modules": ["agent_kit/integrations/"], "example": "examples/claude_agent_sdk_monitored.py"}
+    {
+      "name": "hooks-approval-gates",
+      "spec": "specs/11-hooks-approval-gates.md",
+      "modules": [
+        "agent_kit/hooks.py",
+        "agent_kit/agent/loop.py"
+      ],
+      "example": "examples/approval_gate.py"
+    },
+    {
+      "name": "mcp-client",
+      "spec": "specs/12-mcp-client.md",
+      "modules": [
+        "agent_kit/tools/mcp.py"
+      ],
+      "example": "examples/mcp_tools.py"
+    },
+    {
+      "name": "typed-results",
+      "spec": "specs/13-typed-results.md",
+      "modules": [
+        "agent_kit/output.py"
+      ],
+      "example": "examples/typed_output.py"
+    },
+    {
+      "name": "context-management",
+      "spec": "specs/14-context-management.md",
+      "modules": [
+        "agent_kit/memory/budget.py",
+        "agent_kit/memory/window.py",
+        "agent_kit/providers/anthropic.py"
+      ],
+      "example": "examples/long_running_agent.py"
+    },
+    {
+      "name": "durable-runs",
+      "spec": "specs/15-durable-runs.md",
+      "modules": [
+        "agent_kit/durable/"
+      ],
+      "example": "examples/durable_approval.py"
+    },
+    {
+      "name": "agent-as-tool",
+      "spec": "specs/16-agent-as-tool.md",
+      "modules": [
+        "agent_kit/agent/delegation.py",
+        "agent_kit/agent/loop.py"
+      ],
+      "example": "examples/delegation.py"
+    },
+    {
+      "name": "cost-circuit-breaker",
+      "spec": "specs/09-cost-circuit-breaker.md",
+      "modules": [
+        "agent_kit/cloud/budgets.py",
+        "server/app/budgets.py",
+        "server/app/routers/budgets.py"
+      ]
+    },
+    {
+      "name": "compliance-exports",
+      "spec": "specs/10-compliance-exports.md",
+      "modules": [
+        "agent_kit/compliance.py",
+        "agent_kit/cli.py",
+        "server/app/compliance/",
+        "server/app/routers/compliance.py"
+      ]
+    },
+    {
+      "name": "otlp-ingest",
+      "spec": "specs/08-otlp-ingest.md",
+      "modules": [
+        "server/app/otlp/",
+        "server/app/routers/otlp.py"
+      ]
+    },
+    {
+      "name": "harness-adapters",
+      "spec": "specs/07-harness-adapters.md",
+      "modules": [
+        "agent_kit/integrations/"
+      ],
+      "example": "examples/claude_agent_sdk_monitored.py"
+    }
   ],
-  "audit_event_types": ["agent_start", "llm_complete", "tool_call", "agent_complete", "circuit_breaker_state_change", "budget_exceeded", "tool_denied", "llm_call_denied", "tool_output_replaced", "approval_requested", "approval_granted", "approval_denied", "output_validation_failed", "context_trimmed", "context_compacted", "context_edited", "run_suspended", "run_resumed", "tool_interrupted"],
-  "cloud_event_types": ["run_start", "turn_complete", "run_complete", "run_error", "circuit_state_change", "audit_flush"],
+  "audit_event_types": [
+    "agent_start",
+    "llm_complete",
+    "tool_call",
+    "agent_complete",
+    "circuit_breaker_state_change",
+    "budget_exceeded",
+    "tool_denied",
+    "llm_call_denied",
+    "tool_output_replaced",
+    "approval_requested",
+    "approval_granted",
+    "approval_denied",
+    "output_validation_failed",
+    "context_trimmed",
+    "context_compacted",
+    "context_edited",
+    "run_suspended",
+    "run_resumed",
+    "tool_interrupted"
+  ],
+  "cloud_event_types": [
+    "run_start",
+    "turn_complete",
+    "run_complete",
+    "run_error",
+    "circuit_state_change",
+    "audit_flush"
+  ],
   "exceptions": {
     "base": "AgentKitError",
-    "loop": ["ProviderError", "CircuitOpenError", "MaxTurnsExceededError", "BudgetExceededError", "RunStoppedByHookError"],
-    "tools": ["ToolNotFoundError", "ToolNotAllowedError", "ToolExecutionError", "MCPConnectionError", "MCPToolError"],
-    "output": ["OutputValidationError"],
-    "durable": ["RunNotFoundError", "RunConflictError", "CheckpointError"],
-    "other": ["AuditVerificationError", "DAGCycleError", "DAGMissingDependencyError"]
+    "loop": [
+      "ProviderError",
+      "CircuitOpenError",
+      "MaxTurnsExceededError",
+      "BudgetExceededError",
+      "RunStoppedByHookError"
+    ],
+    "tools": [
+      "ToolNotFoundError",
+      "ToolNotAllowedError",
+      "ToolExecutionError",
+      "MCPConnectionError",
+      "MCPToolError"
+    ],
+    "output": [
+      "OutputValidationError"
+    ],
+    "durable": [
+      "RunNotFoundError",
+      "RunConflictError",
+      "CheckpointError"
+    ],
+    "other": [
+      "AuditVerificationError",
+      "DAGCycleError",
+      "DAGMissingDependencyError"
+    ]
   },
   "server_routers": {
     "server/app/routers/ingest.py": "POST /v1/events",
@@ -85,56 +373,220 @@
     "path": "server/migrations/versions/",
     "count": 7,
     "versions": {
-      "001_initial_schema": ["organizations", "cloud_event_log", "audit_runs", "audit_events"],
-      "002_metrics_schema": ["agent_metric_snapshots", "active_run_cache", "circuit_breaker_events"],
-      "003_alerting": ["alert_channels", "alert_rules", "alert_firings"],
-      "004_org_tier": ["organizations.tier", "organizations.plan_metadata"],
-      "005_otlp_ingest": ["audit_runs.chain_origin", "active_run_cache.last_event_at", "active_run_cache.failure_message"],
-      "006_budgets": ["budgets"],
-      "007_compliance": ["organizations.audit_retention_days", "signing_keys", "legal_holds", "deletion_receipts"]
+      "001_initial_schema": [
+        "organizations",
+        "cloud_event_log",
+        "audit_runs",
+        "audit_events"
+      ],
+      "002_metrics_schema": [
+        "agent_metric_snapshots",
+        "active_run_cache",
+        "circuit_breaker_events"
+      ],
+      "003_alerting": [
+        "alert_channels",
+        "alert_rules",
+        "alert_firings"
+      ],
+      "004_org_tier": [
+        "organizations.tier",
+        "organizations.plan_metadata"
+      ],
+      "005_otlp_ingest": [
+        "audit_runs.chain_origin",
+        "active_run_cache.last_event_at",
+        "active_run_cache.failure_message"
+      ],
+      "006_budgets": [
+        "budgets"
+      ],
+      "007_compliance": [
+        "organizations.audit_retention_days",
+        "signing_keys",
+        "legal_holds",
+        "deletion_receipts"
+      ]
     }
   },
   "dependencies": {
-    "core": {"anthropic": ">=1.0", "pydantic": ">=2.5", "httpx": ">=0.27"},
-    "optional": {
-      "openai": {"openai": ">=1.40"},
-      "ollama": {},
-      "otel": {"opentelemetry-api": ">=1.24", "opentelemetry-sdk": ">=1.24"},
-      "claude-agent-sdk": {"claude-agent-sdk": ">=0.2"},
-      "openai-agents": {"openai-agents": ">=0.22"},
-      "compliance": {"cryptography": ">=41"},
-      "mcp": {"mcp": ">=2.0"}
+    "core": {
+      "anthropic": ">=1.0",
+      "pydantic": ">=2.5",
+      "httpx": ">=0.27"
     },
-    "dev": {"pytest": ">=8", "pytest-asyncio": ">=0.23", "respx": ">=0.21", "ruff": ">=0.15,<0.17", "mypy": ">=1.9"}
+    "optional": {
+      "openai": {
+        "openai": ">=1.40"
+      },
+      "ollama": {},
+      "otel": {
+        "opentelemetry-api": ">=1.24",
+        "opentelemetry-sdk": ">=1.24"
+      },
+      "claude-agent-sdk": {
+        "claude-agent-sdk": ">=0.2"
+      },
+      "openai-agents": {
+        "openai-agents": ">=0.22"
+      },
+      "compliance": {
+        "cryptography": ">=41"
+      },
+      "mcp": {
+        "mcp": ">=2.0"
+      }
+    },
+    "dev": {
+      "pytest": ">=8",
+      "pytest-asyncio": ">=0.23",
+      "respx": ">=0.21",
+      "ruff": ">=0.15,<0.17",
+      "mypy": ">=1.9"
+    }
   },
   "server_dependencies": {
-    "core": {"fastapi": ">=0.111", "uvicorn[standard]": ">=0.30", "sqlalchemy[asyncio]": ">=2.0", "asyncpg": ">=0.29", "aiosqlite": ">=0.20", "alembic": ">=1.13", "pydantic": ">=2.5", "httpx": ">=0.27", "opentelemetry-proto": ">=1.24", "cryptography": ">=41"},
-    "dev": {"pytest": ">=8", "pytest-asyncio": ">=0.23", "httpx": ">=0.27", "opentelemetry-sdk": ">=1.24", "opentelemetry-exporter-otlp-proto-common": ">=1.24", "ruff": ">=0.15,<0.17", "mypy": ">=1.9"}
+    "core": {
+      "fastapi": ">=0.111",
+      "uvicorn[standard]": ">=0.30",
+      "sqlalchemy[asyncio]": ">=2.0",
+      "asyncpg": ">=0.29",
+      "aiosqlite": ">=0.20",
+      "alembic": ">=1.13",
+      "pydantic": ">=2.5",
+      "httpx": ">=0.27",
+      "opentelemetry-proto": ">=1.24",
+      "cryptography": ">=41"
+    },
+    "dev": {
+      "pytest": ">=8",
+      "pytest-asyncio": ">=0.23",
+      "httpx": ">=0.27",
+      "opentelemetry-sdk": ">=1.24",
+      "opentelemetry-exporter-otlp-proto-common": ">=1.24",
+      "ruff": ">=0.15,<0.17",
+      "mypy": ">=1.9"
+    }
   },
   "tests": {
     "sdk": {
-      "collected": 267,
-      "files": ["test_agent.py", "test_audit.py", "test_budgets.py", "test_circuit_breaker.py", "test_cloud_reporter.py", "test_compliance.py", "test_context_budget.py", "test_dag.py", "test_durable_runs.py", "test_hooks.py", "test_integrations_claude.py", "test_integrations_openai_agents.py", "test_integrations_recorder.py", "test_mcp.py", "test_memory_window.py", "test_output.py", "test_pipeline.py", "test_provider_requests.py", "test_retry.py", "test_run_store.py", "test_sqlite_memory.py", "test_tools.py", "test_typed_results.py"],
-      "fixtures": ["tests/conftest.py (MockProvider)", "tests/fixtures/mcp_fixture_server.py"],
+      "collected": 298,
+      "files": [
+        "test_agent.py",
+        "test_agent_tool.py",
+        "test_audit.py",
+        "test_budgets.py",
+        "test_circuit_breaker.py",
+        "test_cloud_reporter.py",
+        "test_compliance.py",
+        "test_context_budget.py",
+        "test_dag.py",
+        "test_durable_runs.py",
+        "test_hooks.py",
+        "test_integrations_claude.py",
+        "test_integrations_openai_agents.py",
+        "test_integrations_recorder.py",
+        "test_mcp.py",
+        "test_memory_window.py",
+        "test_output.py",
+        "test_pipeline.py",
+        "test_provider_requests.py",
+        "test_retry.py",
+        "test_run_store.py",
+        "test_sqlite_memory.py",
+        "test_tools.py",
+        "test_typed_results.py"
+      ],
+      "fixtures": [
+        "tests/conftest.py (MockProvider)",
+        "tests/fixtures/mcp_fixture_server.py"
+      ],
       "provider_mocking": "fake clients recording request kwargs (respx does not intercept anthropic>=1.0 httpx2)"
     },
     "server": {
       "collected": 160,
-      "files": ["test_alerts.py", "test_audit_chain_append.py", "test_budgets.py", "test_compliance.py", "test_ingest.py", "test_metrics.py", "test_otlp_decode.py", "test_otlp_ingest.py", "test_otlp_normalize.py", "test_support.py"],
-      "helpers": ["server/tests/conftest.py", "server/tests/otlp_helpers.py"],
+      "files": [
+        "test_alerts.py",
+        "test_audit_chain_append.py",
+        "test_budgets.py",
+        "test_compliance.py",
+        "test_ingest.py",
+        "test_metrics.py",
+        "test_otlp_decode.py",
+        "test_otlp_ingest.py",
+        "test_otlp_normalize.py",
+        "test_support.py"
+      ],
+      "helpers": [
+        "server/tests/conftest.py",
+        "server/tests/otlp_helpers.py"
+      ],
       "db": "in-process aiosqlite, never mocked"
     },
     "asyncio_mode": "auto"
   },
-  "examples": ["hello_agent.py", "pipeline_example.py", "multi_tool_agent.py", "research_dag.py", "safe_agent.py", "claude_agent_sdk_monitored.py", "openai_agents_monitored.py", "typed_output.py", "long_running_agent.py", "durable_approval.py", "mcp_tools.py", "approval_gate.py", "cloud_monitored.py"],
-  "docs": ["README.md", "CONTRIBUTING.md", "CHANGELOG.md", "examples/README.md", "docs/cloud-quickstart.md", "docs/self-hosting.md", "docs/api-reference.md", "docs/troubleshooting.md"],
-  "plans": "docs/superpowers/plans/ (10 files, 2026-09-13 to 2026-09-14)",
-  "specs": ["00-platform-overview", "01-audit-trail", "02-fleet-dashboard", "03-alerting", "04-sla-support", "05-dashboard-ui", "06-harness-roadmap", "07-harness-adapters", "08-otlp-ingest", "09-cost-circuit-breaker", "10-compliance-exports", "11-hooks-approval-gates", "12-mcp-client", "13-typed-results", "14-context-management", "15-durable-runs"],
+  "examples": [
+    "hello_agent.py",
+    "pipeline_example.py",
+    "multi_tool_agent.py",
+    "research_dag.py",
+    "safe_agent.py",
+    "claude_agent_sdk_monitored.py",
+    "openai_agents_monitored.py",
+    "typed_output.py",
+    "long_running_agent.py",
+    "durable_approval.py",
+    "mcp_tools.py",
+    "approval_gate.py",
+    "delegation.py",
+    "cloud_monitored.py"
+  ],
+  "docs": [
+    "README.md",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
+    "examples/README.md",
+    "docs/cloud-quickstart.md",
+    "docs/self-hosting.md",
+    "docs/api-reference.md",
+    "docs/troubleshooting.md"
+  ],
+  "plans": "docs/superpowers/plans/ (11 files, 2026-09-13 to 2026-09-15)",
+  "specs": [
+    "00-platform-overview",
+    "01-audit-trail",
+    "02-fleet-dashboard",
+    "03-alerting",
+    "04-sla-support",
+    "05-dashboard-ui",
+    "06-harness-roadmap",
+    "07-harness-adapters",
+    "08-otlp-ingest",
+    "09-cost-circuit-breaker",
+    "10-compliance-exports",
+    "11-hooks-approval-gates",
+    "12-mcp-client",
+    "13-typed-results",
+    "14-context-management",
+    "15-durable-runs",
+    "16-agent-as-tool"
+  ],
   "ci": {
     "workflow": ".github/workflows/ci.yml",
-    "python_versions": ["3.11", "3.12"],
-    "sdk": ["ruff check agent_kit tests", "mypy agent_kit", "pytest"],
-    "server": ["ruff check app tests", "pytest", "alembic upgrade head"],
+    "python_versions": [
+      "3.11",
+      "3.12"
+    ],
+    "sdk": [
+      "ruff check agent_kit tests",
+      "mypy agent_kit",
+      "pytest"
+    ],
+    "server": [
+      "ruff check app tests",
+      "pytest",
+      "alembic upgrade head"
+    ],
     "examples": "byte-compile examples/"
   }
 }

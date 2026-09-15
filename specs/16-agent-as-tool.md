@@ -1,6 +1,6 @@
 # Spec 16 — Agent as Tool
 
-Status: **approved** · Written 2026-09-15 · Roadmap item: 2.6 (`specs/06-harness-roadmap.md`)
+Status: **implemented** · Written 2026-09-15 · Roadmap item: 2.6 (`specs/06-harness-roadmap.md`)
 
 ## Goal
 

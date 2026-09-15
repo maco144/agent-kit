@@ -19,7 +19,7 @@ working plan to close that gap, in order.
 | Approval gates / hooks | ✅ (2.3) | ✅ | ✅ |
 | Context management | ✅ (2.4) | ✅ | Partial |
 | Durable runs / resume | ✅ (2.5) | Sessions | ✅ |
-| Sub-agents / handoffs | Static DAG | ✅ | ✅ |
+| Sub-agents / handoffs | Delegation ✅ (2.6); no handoffs | ✅ | ✅ |
 | Streaming with tools | ✅ (Tier 1) | ✅ | ✅ |
 | Per-provider circuit breaker | ✅ | ❌ | ❌ |
 | Tamper-evident audit + server verify | ✅ | ❌ | ❌ |
@@ -62,7 +62,7 @@ Implementation plan: `docs/superpowers/plans/2026-09-13-tier1-harness-fundamenta
 - [x] **2.4 Context management** — design: `specs/14-context-management.md`. prompt-caching breakpoints, compaction/context-editing passthrough,
       thinking and effort settings on `AgentConfig`, token-based windowing.
 - [x] **2.5 Durable runs** — design: `specs/15-durable-runs.md`. checkpoint loop state per `run_id` (SQLite); `agent.resume(run_id)`.
-- [ ] **2.6 Agent-as-tool** — design: `specs/16-agent-as-tool.md`. expose an `Agent` as a `Tool` for delegation; DAG stays for static graphs.
+- [x] **2.6 Agent-as-tool** — design: `specs/16-agent-as-tool.md`. expose an `Agent` as a `Tool` for delegation; DAG stays for static graphs.
 
 ## Tier 3 — Wedge (what only we offer)
 
