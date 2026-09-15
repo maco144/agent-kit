@@ -35,7 +35,7 @@ Each event object:
 ```json
 {
   "event_id": "uuid-v4",
-  "event_type": "run_start | turn_complete | run_complete | run_error | circuit_state_change | audit_flush",
+  "event_type": "run_start | turn_complete | run_complete | run_error | circuit_state_change | audit_flush | tool_output_flagged",
   "run_id": "uuid-v4",
   "agent_name": "billing-agent",
   "project": "production",
@@ -54,6 +54,7 @@ Payload shapes by `event_type`:
 | `run_error` | `error_type`, `error_message`, `turn_count` |
 | `circuit_state_change` | `resource`, `prev_state`, `new_state`, `failure_count` |
 | `audit_flush` | `final_root_hash`, `event_count`, `events[]` |
+| `tool_output_flagged` | `call_id`, `tool_name`, `action` (`allowed` / `wrapped` / `blocked` / `stopped`), `max_severity`, `findings[]` (`scanner`, `rule`, `severity`, `location`, `indicator`) — never tool output |
 
 **Response** `200 OK`
 
@@ -530,6 +531,7 @@ Rule types and their `config` fields:
 | `cost_anomaly` | `threshold_usd` (float), `window_hours` (int) | Polled every 60s |
 | `error_rate` | `threshold_pct` (float), `window_hours` (int), `min_runs` (int) | Polled every 60s |
 | `budget_exceeded` | `budget_id` (a budget ID, or `*` for any budget) | Event-driven: fires when a budget trips, resolves when it closes |
+| `tool_output_flagged` | `agent_name`, `project` (exact or `*`), `min_severity` (`low` / `medium` / `high` / `critical`, default `high`) | Event-driven: fires when an SDK scanner flags tool output at or above `min_severity`; never auto-resolves. Context: `run_id`, `agent_name`, `project`, `tool_name`, `action`, `max_severity`, `rules`, `indicators` |
 
 **Response** `201 Created` — returns the created `AlertRuleSchema`.
 

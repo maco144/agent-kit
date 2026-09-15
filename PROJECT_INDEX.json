@@ -62,7 +62,8 @@
       "SUSPEND",
       "require_approval",
       "deny_tools",
-      "allow_only"
+      "allow_only",
+      "flagged_payload"
     ],
     "agent_kit.output": [
       "OutputSpec",
@@ -130,7 +131,10 @@
       "SpanKind",
       "SpanEvent",
       "AuditEventRecord",
-      "PipelineResult"
+      "PipelineResult",
+      "Finding",
+      "Severity",
+      "SEVERITY_ORDER"
     ],
     "agent_kit.agent": [
       "Agent",
@@ -144,6 +148,19 @@
       "child_run_id",
       "stack_hooks",
       "DELEGATION_NAMESPACE"
+    ],
+    "agent_kit.scanning": [
+      "scan_tool_output",
+      "PatternScanner",
+      "PatternRule",
+      "BUILTIN_RULES",
+      "NullconeScanner",
+      "Scanner",
+      "TextSpan",
+      "collect_spans",
+      "ENVELOPE_KEY",
+      "Finding",
+      "Severity"
     ]
   },
   "agent": {
@@ -263,6 +280,17 @@
       "example": "examples/delegation.py"
     },
     {
+      "name": "tool-output-scanning",
+      "spec": "specs/17-tool-output-scanning.md",
+      "modules": [
+        "agent_kit/scanning/",
+        "agent_kit/hooks.py",
+        "agent_kit/agent/loop.py",
+        "server/app/alerting/evaluator.py"
+      ],
+      "example": "examples/scanned_tools.py"
+    },
+    {
       "name": "cost-circuit-breaker",
       "spec": "specs/09-cost-circuit-breaker.md",
       "modules": [
@@ -317,7 +345,8 @@
     "context_edited",
     "run_suspended",
     "run_resumed",
-    "tool_interrupted"
+    "tool_interrupted",
+    "tool_output_flagged"
   ],
   "cloud_event_types": [
     "run_start",
@@ -325,7 +354,8 @@
     "run_complete",
     "run_error",
     "circuit_state_change",
-    "audit_flush"
+    "audit_flush",
+    "tool_output_flagged"
   ],
   "exceptions": {
     "base": "AgentKitError",
@@ -355,6 +385,9 @@
       "AuditVerificationError",
       "DAGCycleError",
       "DAGMissingDependencyError"
+    ],
+    "scanning": [
+      "ScannerUnavailableError"
     ]
   },
   "server_routers": {
@@ -470,7 +503,7 @@
   },
   "tests": {
     "sdk": {
-      "collected": 298,
+      "collected": 365,
       "files": [
         "test_agent.py",
         "test_agent_tool.py",
@@ -493,18 +526,20 @@
         "test_provider_requests.py",
         "test_retry.py",
         "test_run_store.py",
+        "test_scanning.py",
         "test_sqlite_memory.py",
         "test_tools.py",
         "test_typed_results.py"
       ],
       "fixtures": [
         "tests/conftest.py (MockProvider)",
-        "tests/fixtures/mcp_fixture_server.py"
+        "tests/fixtures/mcp_fixture_server.py",
+        "tests/injection_fixtures.py (all injection payloads, assembled at import)"
       ],
       "provider_mocking": "fake clients recording request kwargs (respx does not intercept anthropic>=1.0 httpx2)"
     },
     "server": {
-      "collected": 160,
+      "collected": 166,
       "files": [
         "test_alerts.py",
         "test_audit_chain_append.py",
@@ -515,7 +550,8 @@
         "test_otlp_decode.py",
         "test_otlp_ingest.py",
         "test_otlp_normalize.py",
-        "test_support.py"
+        "test_support.py",
+        "test_tool_output_flagged.py"
       ],
       "helpers": [
         "server/tests/conftest.py",
@@ -539,6 +575,7 @@
     "mcp_tools.py",
     "approval_gate.py",
     "delegation.py",
+    "scanned_tools.py",
     "cloud_monitored.py"
   ],
   "docs": [
@@ -551,7 +588,7 @@
     "docs/api-reference.md",
     "docs/troubleshooting.md"
   ],
-  "plans": "docs/superpowers/plans/ (11 files, 2026-09-13 to 2026-09-15)",
+  "plans": "docs/superpowers/plans/ (12 files, 2026-09-13 to 2026-09-15)",
   "specs": [
     "00-platform-overview",
     "01-audit-trail",
@@ -569,7 +606,8 @@
     "13-typed-results",
     "14-context-management",
     "15-durable-runs",
-    "16-agent-as-tool"
+    "16-agent-as-tool",
+    "17-tool-output-scanning"
   ],
   "ci": {
     "workflow": ".github/workflows/ci.yml",

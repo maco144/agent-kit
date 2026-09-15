@@ -23,6 +23,7 @@ demo — running agents you can trust, afford, and prove things about:
 | MCP tools | Tools from any MCP server over stdio or streamable HTTP, governed by the same allowlist, hooks, budgets, and audit |
 | Hooks and approval gates | Block tools, require human approval, redact tool output, or stop runs — fail-closed, every decision audited |
 | Agents as tools | Delegate to child agents that can't escape the parent's policy, budget, or approvals — child audit chains are hash-committed into the parent's |
+| Tool output scanning | Poisoned web pages, documents, MCP results, and child-agent answers are blocked or marked untrusted before the model reads them; every finding is audited and can page on-call |
 | Durable runs | Checkpoints at every turn: resume after crashes, suspend for human approval, never run a side effect twice |
 | Evidence bundles | Signed exports of audit chains that anyone can verify offline (`agent-kit verify`), with retention, legal holds, and signed deletion receipts |
 | Self-hostable ops backend | Fleet metrics, alerting (Slack, PagerDuty, webhook, SMTP), and SLA context — see [agent-kit Cloud](#agent-kit-cloud) |
@@ -31,7 +32,7 @@ demo — running agents you can trust, afford, and prove things about:
 
 Tool calls run in parallel, and `agent.stream()` runs the same loop as `agent.run()` — tools, retry,
 circuit breaking, and audit included. Typed results, context management, and MCP tools are built in too. Not
-yet: handoffs and tool-output injection scanning — tracked in [specs/06-harness-roadmap.md](specs/06-harness-roadmap.md).
+yet: handoffs — tracked in [specs/06-harness-roadmap.md](specs/06-harness-roadmap.md).
 
 ---
 
@@ -560,6 +561,61 @@ so the same agent tool can run several times in one turn. Delegation cannot esca
   child tools it permits, too. Nesting is limited by `AgentConfig(max_delegation_depth=5)`.
 
 For a fixed graph of agents, use `DAGOrchestrator`. Full example: [`examples/delegation.py`](examples/delegation.py).
+
+---
+
+## Tool output scanning
+
+Everything a tool returns — a web page, a document, an MCP result, a delegated agent's answer — lands in the
+model's context as if it were trustworthy. Screen it first:
+
+```python
+from agent_kit.scanning import NullconeScanner, PatternScanner, scan_tool_output
+
+agent = Agent(provider, tools=[fetch_page, research], config=AgentConfig(hooks=Hooks(after_tool=[
+    scan_tool_output(
+        PatternScanner(),                      # local rules, no network
+        NullconeScanner(),                     # optional threat-intel lookups
+        block_at="high", warn_at="medium",     # stop_run_at=... is also available
+        trusted_tools=["lookup_order"],        # internal tools you don't need to screen
+    ),
+])))
+```
+
+The most severe finding decides what the model sees:
+
+| Severity reached | Model sees |
+|---|---|
+| `stop_run_at` (off by default) | nothing — the run stops with `RunStoppedByHookError` |
+| `block_at` (default `high`) | `Tool output blocked: possible prompt injection: <rule> (<severity>)` |
+| `warn_at` (default `medium`) | the output inside an `agentkit_scan` envelope that marks it untrusted data |
+| below `warn_at` | the output unchanged; the finding is still recorded |
+
+`PatternScanner` rules (disable any with `disable=[...]`, add your own with `extra_rules=[PatternRule(...)]`):
+
+| Rule | Severity | Catches |
+|---|---|---|
+| `unicode_tags` | critical | instructions hidden in invisible Unicode tag characters |
+| `role_token` | critical | chat-template control tokens and fake system / tool-result tags |
+| `instruction_override` | high | text telling the model to discard its previous instructions or system prompt |
+| `hidden_text` | high | bidirectional overrides and runs of zero-width characters |
+| `encoded_payload` | high | base64 blobs that decode to either of the two rules above |
+| `exfil_markdown` | medium | markdown images and links that carry data out in their query string |
+| `persona_switch` | medium | named jailbreak personas and "developer mode" switches |
+
+Rules favour precision: tool output is full of ordinary prose, docs, and code, so everyday phrasing isn't flagged.
+
+`NullconeScanner` checks URLs, domains, IPs, and hashes found in the output against the
+[Nullcone](https://nullcone.ai) threat database. It sends those indicators — never the output, never URL query
+strings or credentials — so treat it as data egress. Confidence filtering comes from the API (`unverified` and
+low-score hits are ignored by default); reserved names and private IPs are never looked up; answers are cached; it
+fails open on errors unless `fail_closed=True`, and pauses after HTTP 429.
+
+Every decision with findings appends a `tool_output_flagged` audit event and reports it to agent-kit Cloud (rule,
+severity, JSON path, and matched indicator — no output text), where a `tool_output_flagged` alert rule with
+`min_severity` pages on-call. A lead agent's scanner also screens every delegated child's tool outputs. Any object
+with a `name` and an `async scan(spans) -> list[Finding]` method is a scanner. Full example:
+[`examples/scanned_tools.py`](examples/scanned_tools.py); design: [`specs/17-tool-output-scanning.md`](specs/17-tool-output-scanning.md).
 
 ---
 

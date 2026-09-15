@@ -23,6 +23,7 @@ working plan to close that gap, in order.
 | Streaming with tools | ✅ (Tier 1) | ✅ | ✅ |
 | Per-provider circuit breaker | ✅ | ❌ | ❌ |
 | Tamper-evident audit + server verify | ✅ | ❌ | ❌ |
+| Tool-output injection scanning | ✅ (3.4) | Partial | ❌ |
 | Self-hosted fleet metrics + alerting | ✅ | ❌ | Hosted, paid |
 | Provider-neutral | ✅ | Vendor-bound | ✅ |
 
@@ -75,7 +76,7 @@ Implementation plan: `docs/superpowers/plans/2026-09-13-tier1-harness-fundamenta
 - [x] **3.3 Compliance exports** — design: `specs/10-compliance-exports.md`. package the hash-chained audit and server-side verification as
       signed exports with retention policies for regulated buyers (EU AI Act record-keeping,
       SOC 2 evidence).
-- [ ] **3.4 Tool-output injection scanning** — design: `specs/17-tool-output-scanning.md`. an `after_tool` policy that screens tool results for
+- [x] **3.4 Tool-output injection scanning** — design: `specs/17-tool-output-scanning.md`. an `after_tool` policy that screens tool results for
       prompt-injection payloads before they re-enter context (depends on 2.3).
 
 ## Sequencing

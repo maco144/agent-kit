@@ -1,6 +1,6 @@
 # Spec 17 — Tool Output Scanning
 
-Status: **approved** · Written 2026-09-15 · Roadmap item: 3.4 (`specs/06-harness-roadmap.md`)
+Status: **implemented** · Written 2026-09-15 · Roadmap item: 3.4 (`specs/06-harness-roadmap.md`)
 
 ## Goal
 
