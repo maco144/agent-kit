@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 from agent_kit.exceptions import ProviderError
 from agent_kit.providers.base import ProviderConfig
 from agent_kit.providers.pricing import lookup_rates
-from agent_kit.types import CostSummary, Message, ToolCall, ToolSchema, Turn
+from agent_kit.types import CostSummary, Message, RequestOptions, ToolCall, ToolSchema, Turn
 
 if TYPE_CHECKING:
     from agent_kit.output import OutputSpec
@@ -48,6 +48,9 @@ _CACHE_WRITE_MULTIPLIER = 1.25
 
 _DEFAULT_MODEL = "claude-sonnet-4-6"
 
+_COMPACTION_BETA = "compact-2026-01-12"
+_CONTEXT_EDITING_BETA = "context-management-2025-06-27"
+
 
 def _estimate_cost(
     model: str,
@@ -69,6 +72,23 @@ def _estimate_cost(
         + cache_read_tokens * in_rate * read_multiplier
         + cache_write_tokens * in_rate * _CACHE_WRITE_MULTIPLIER
     ) / 1_000_000
+
+
+def _get(obj: Any, name: str) -> Any:
+    return obj.get(name) if isinstance(obj, dict) else getattr(obj, name, None)
+
+
+def _plain(value: Any) -> Any:
+    """SDK content blocks (or test doubles) as JSON-ready dicts, dropping unset fields."""
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json", exclude_none=True)
+    if isinstance(value, dict):
+        return {k: _plain(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_plain(v) for v in value]
+    if hasattr(value, "__dict__"):
+        return {k: _plain(v) for k, v in vars(value).items() if v is not None}
+    return value
 
 
 def _to_anthropic_tools(schemas: list[ToolSchema]) -> list[dict[str, Any]]:
@@ -117,6 +137,9 @@ def _messages_to_anthropic(
                 prev["content"].append(block)
             else:
                 result.append({"role": "user", "content": [block]})
+        elif msg.role == "assistant" and msg.native_provider == "anthropic" and msg.native_content:
+            # Verbatim: thinking signatures and compaction blocks must come back unchanged
+            result.append({"role": "assistant", "content": list(msg.native_content)})
         elif msg.role == "assistant" and msg.tool_calls:
             blocks: list[dict[str, Any]] = []
             if msg.content:
@@ -143,6 +166,59 @@ def _apply_output_schema(call_kwargs: dict[str, Any], output_schema: OutputSpec[
         }
 
 
+def _merge(call_kwargs: dict[str, Any], key: str, values: dict[str, Any]) -> None:
+    call_kwargs[key] = {**call_kwargs.get(key, {}), **values}
+
+
+def _apply_options(call_kwargs: dict[str, Any], options: RequestOptions | None) -> list[str]:
+    """Apply thinking, effort, caching, context management, and passthrough; return the betas needed."""
+    if options is None:
+        return []
+    extra = dict(options.provider_options)
+    betas = set(extra.pop("betas", None) or [])
+    for key in ("output_config", "thinking"):
+        if key in extra:
+            _merge(call_kwargs, key, extra.pop(key))
+    call_kwargs.update(extra)
+    if options.thinking:
+        _merge(call_kwargs, "thinking", {"type": options.thinking})
+    if options.effort:
+        _merge(call_kwargs, "output_config", {"effort": options.effort})
+    if options.prompt_caching:
+        system = call_kwargs.get("system")
+        if isinstance(system, str) and system:
+            call_kwargs["system"] = [
+                {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+            ]
+        call_kwargs["cache_control"] = {"type": "ephemeral"}  # automatic breakpoint on the conversation
+    edits: list[dict[str, Any]] = []
+    if options.clear_tool_results:
+        ctr = options.clear_tool_results
+        edit: dict[str, Any] = {
+            "type": "clear_tool_uses_20250919",
+            "trigger": {"type": "input_tokens", "value": ctr.trigger_tokens},
+            "keep": {"type": "tool_uses", "value": ctr.keep},
+        }
+        if ctr.exclude_tools:
+            edit["exclude_tools"] = list(ctr.exclude_tools)
+        if ctr.clear_inputs:
+            edit["clear_tool_inputs"] = True
+        edits.append(edit)
+        betas.add(_CONTEXT_EDITING_BETA)
+    if options.compaction:
+        compact: dict[str, Any] = {
+            "type": "compact_20260112",
+            "trigger": {"type": "input_tokens", "value": options.compaction.trigger_tokens},
+        }
+        if options.compaction.instructions:
+            compact["instructions"] = options.compaction.instructions
+        edits.append(compact)
+        betas.add(_COMPACTION_BETA)
+    if edits:
+        call_kwargs["context_management"] = {"edits": edits}
+    return sorted(betas)
+
+
 def _turn_from_response(
     response: Any, messages: list[Message], model: str, duration_ms: int
 ) -> Turn:
@@ -161,26 +237,48 @@ def _turn_from_response(
                 )
             )
 
-    usage = response.usage
-    cache_read = getattr(usage, "cache_read_input_tokens", None) or 0
-    cache_write = getattr(usage, "cache_creation_input_tokens", None) or 0
+    # With compaction, top-level usage excludes the summarisation call; billing is the sum of iterations
+    iterations = _get(response.usage, "iterations") or []
+    parts = iterations or [response.usage]
+
+    def total(field: str) -> int:
+        return sum(int(_get(p, field) or 0) for p in parts)
+
+    input_tokens, output_tokens = total("input_tokens"), total("output_tokens")
+    cache_read, cache_write = total("cache_read_input_tokens"), total("cache_creation_input_tokens")
     cost = CostSummary(
-        input_tokens=usage.input_tokens,
-        output_tokens=usage.output_tokens,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
         cache_read_tokens=cache_read,
         cache_write_tokens=cache_write,
-        total_tokens=usage.input_tokens + usage.output_tokens + cache_read + cache_write,
-        cost_usd=_estimate_cost(
-            model, usage.input_tokens, usage.output_tokens, cache_read, cache_write
-        ),
+        total_tokens=input_tokens + output_tokens + cache_read + cache_write,
+        cost_usd=_estimate_cost(model, input_tokens, output_tokens, cache_read, cache_write),
         model=model,
     )
+    context_events: list[dict[str, Any]] = [
+        {
+            "type": "compaction",
+            "input_tokens": int(_get(it, "input_tokens") or 0),
+            "output_tokens": int(_get(it, "output_tokens") or 0),
+        }
+        for it in iterations
+        if _get(it, "type") == "compaction"
+    ]
+    context_management = getattr(response, "context_management", None)
+    context_events.extend(_plain(edit) for edit in (_get(context_management, "applied_edits") or []))
     return Turn(
         messages_in=messages,
-        message_out=Message(role="assistant", content=" ".join(text_parts), tool_calls=tool_calls),
+        message_out=Message(
+            role="assistant",
+            content=" ".join(text_parts),
+            tool_calls=tool_calls,
+            native_content=[_plain(block) for block in response.content],
+            native_provider="anthropic",
+        ),
         tool_calls=tool_calls,
         cost=cost,
         duration_ms=duration_ms,
+        context_events=context_events,
     )
 
 
@@ -196,6 +294,7 @@ class AnthropicProvider:
     """
 
     supports_structured_output = True
+    supports_request_options = True
 
     def __init__(
         self,
@@ -226,20 +325,21 @@ class AnthropicProvider:
     def name(self) -> str:
         return "anthropic"
 
-    async def complete(
+    def _request(
         self,
         messages: list[Message],
-        model: str | None = None,
-        tools: list[ToolSchema] | None = None,
-        system: str | None = None,
-        max_tokens: int = 4096,
-        output_schema: OutputSpec[Any] | None = None,
-        **kwargs: Any,
-    ) -> Turn:
+        model: str | None,
+        tools: list[ToolSchema] | None,
+        system: str | None,
+        max_tokens: int,
+        output_schema: OutputSpec[Any] | None,
+        options: RequestOptions | None,
+        kwargs: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], list[str]]:
+        """Build call kwargs shared by complete() and stream(); returns (model, kwargs, betas)."""
         resolved_model = model or self.config.default_model
         sys_from_messages, converted = _messages_to_anthropic(messages)
         resolved_system = system or sys_from_messages
-
         call_kwargs: dict[str, Any] = {
             "model": resolved_model,
             "messages": converted,
@@ -250,11 +350,30 @@ class AnthropicProvider:
             call_kwargs["system"] = resolved_system
         if tools:
             call_kwargs["tools"] = _to_anthropic_tools(tools)
+        betas = _apply_options(call_kwargs, options)
         _apply_output_schema(call_kwargs, output_schema)
+        return resolved_model, call_kwargs, betas
 
+    async def complete(
+        self,
+        messages: list[Message],
+        model: str | None = None,
+        tools: list[ToolSchema] | None = None,
+        system: str | None = None,
+        max_tokens: int = 4096,
+        output_schema: OutputSpec[Any] | None = None,
+        options: RequestOptions | None = None,
+        **kwargs: Any,
+    ) -> Turn:
+        resolved_model, call_kwargs, betas = self._request(
+            messages, model, tools, system, max_tokens, output_schema, options, kwargs
+        )
         t0 = time.monotonic()
         try:
-            response = await self._client.messages.create(**call_kwargs)
+            if betas:
+                response = await self._client.beta.messages.create(betas=betas, **call_kwargs)
+            else:
+                response = await self._client.messages.create(**call_kwargs)
         except anthropic.APIError as exc:
             raise ProviderError(f"Anthropic API error: {exc}") from exc
 
@@ -270,27 +389,20 @@ class AnthropicProvider:
         system: str | None = None,
         max_tokens: int = 4096,
         output_schema: OutputSpec[Any] | None = None,
+        options: RequestOptions | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[str | Turn]:
-        resolved_model = model or self.config.default_model
-        sys_from_messages, converted = _messages_to_anthropic(messages)
-        resolved_system = system or sys_from_messages
-
-        call_kwargs: dict[str, Any] = {
-            "model": resolved_model,
-            "messages": converted,
-            "max_tokens": max_tokens,
-            **kwargs,
-        }
-        if resolved_system:
-            call_kwargs["system"] = resolved_system
-        if tools:
-            call_kwargs["tools"] = _to_anthropic_tools(tools)
-        _apply_output_schema(call_kwargs, output_schema)
-
+        resolved_model, call_kwargs, betas = self._request(
+            messages, model, tools, system, max_tokens, output_schema, options, kwargs
+        )
+        manager: Any = (
+            self._client.beta.messages.stream(betas=betas, **call_kwargs)
+            if betas
+            else self._client.messages.stream(**call_kwargs)
+        )
         t0 = time.monotonic()
         try:
-            async with self._client.messages.stream(**call_kwargs) as stream:
+            async with manager as stream:
                 async for text in stream.text_stream:
                     yield text
                 final = await stream.get_final_message()

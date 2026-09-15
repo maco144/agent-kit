@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 from agent_kit.exceptions import ProviderError
 from agent_kit.providers.base import ProviderConfig
 from agent_kit.providers.pricing import lookup_rates
-from agent_kit.types import CostSummary, Message, ToolCall, ToolSchema, Turn
+from agent_kit.types import CostSummary, Message, RequestOptions, ToolCall, ToolSchema, Turn
 
 if TYPE_CHECKING:
     from agent_kit.output import OutputSpec
@@ -56,6 +56,18 @@ def _to_openai_tools(schemas: list[ToolSchema]) -> list[dict[str, Any]]:
         }
         for s in schemas
     ]
+
+
+_REASONING_EFFORT = {"xhigh": "high", "max": "high"}
+
+
+def _apply_options(call_kwargs: dict[str, Any], options: RequestOptions | None) -> None:
+    """Passthrough and effort; thinking, caching, and context management don't apply to this API."""
+    if options is None:
+        return
+    call_kwargs.update(options.provider_options)
+    if options.effort:
+        call_kwargs["reasoning_effort"] = _REASONING_EFFORT.get(options.effort, options.effort)
 
 
 def _apply_response_format(call_kwargs: dict[str, Any], output_schema: OutputSpec[Any] | None) -> None:
@@ -113,6 +125,7 @@ class OpenAIProvider:
     """
 
     supports_structured_output = True
+    supports_request_options = True
 
     def __init__(
         self,
@@ -151,6 +164,7 @@ class OpenAIProvider:
         system: str | None = None,
         max_tokens: int = 4096,
         output_schema: OutputSpec[Any] | None = None,
+        options: RequestOptions | None = None,
         **kwargs: Any,
     ) -> Turn:
         resolved_model = model or self.config.default_model
@@ -169,6 +183,7 @@ class OpenAIProvider:
         if tools:
             call_kwargs["tools"] = _to_openai_tools(tools)
             call_kwargs["tool_choice"] = "auto"
+        _apply_options(call_kwargs, options)
         _apply_response_format(call_kwargs, output_schema)
 
         t0 = time.monotonic()
@@ -222,6 +237,7 @@ class OpenAIProvider:
         system: str | None = None,
         max_tokens: int = 4096,
         output_schema: OutputSpec[Any] | None = None,
+        options: RequestOptions | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[str | Turn]:
         resolved_model = model or self.config.default_model
@@ -240,6 +256,7 @@ class OpenAIProvider:
         if tools:
             call_kwargs["tools"] = _to_openai_tools(tools)
             call_kwargs["tool_choice"] = "auto"
+        _apply_options(call_kwargs, options)
         _apply_response_format(call_kwargs, output_schema)
 
         text_parts: list[str] = []

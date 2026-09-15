@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Protocol, runtime_checkabl
 
 from pydantic import BaseModel
 
-from agent_kit.types import Message, ToolSchema, Turn
+from agent_kit.types import Message, RequestOptions, ToolSchema, Turn
 
 if TYPE_CHECKING:
     from agent_kit.output import OutputSpec
@@ -34,6 +34,9 @@ class BaseProvider(Protocol):
     ``output_schema``. AgentLoop only passes ``output_schema`` to such providers; others receive the
     schema as system prompt instructions instead. Providers whose native constraint prevents tool calls
     also set ``structured_output_with_tools = False``; runs with tools then use the prompt instead.
+
+    Providers that accept ``RequestOptions`` (thinking, effort, caching, context management, passthrough)
+    set ``supports_request_options = True``; ``options=None`` must add nothing to the request.
     """
 
     config: ProviderConfig
@@ -46,6 +49,7 @@ class BaseProvider(Protocol):
         system: str | None = None,
         max_tokens: int = 4096,
         output_schema: OutputSpec[Any] | None = None,
+        options: RequestOptions | None = None,
         **kwargs: Any,
     ) -> Turn:
         """
@@ -64,6 +68,7 @@ class BaseProvider(Protocol):
         system: str | None = None,
         max_tokens: int = 4096,
         output_schema: OutputSpec[Any] | None = None,
+        options: RequestOptions | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[str | Turn]:
         """
