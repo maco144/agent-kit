@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, AsyncIterator, Literal, TypeVar, overload
 
+from agent_kit.agent.delegation import AgentTool
 from agent_kit.agent.loop import AgentLoop
 from agent_kit.audit.chain import AuditChain
 from agent_kit.durable import CHECKPOINT_SCHEMA_VERSION, RunCheckpoint, RunStore
@@ -68,6 +69,7 @@ class AgentConfig:
         provider_options: dict[str, Any] | None = None,
         context_budget_tokens: int | None = 150_000,
         run_store: RunStore | None = None,
+        max_delegation_depth: int = 5,
     ) -> None:
         self.model = model
         self.system_prompt = system_prompt
@@ -94,6 +96,7 @@ class AgentConfig:
         self.provider_options = provider_options or {}  # merged into every provider request
         self.context_budget_tokens = context_budget_tokens  # over budget → cut history once to half
         self.run_store = run_store  # checkpoints: resume after crashes, suspend for approvals
+        self.max_delegation_depth = max_delegation_depth  # nested agent-tool levels allowed below a top-level run
 
 
 class Agent:
@@ -158,6 +161,21 @@ class Agent:
         """Register a tool and return self for fluent chaining."""
         self._registry.register(t)
         return self
+
+    @property
+    def config(self) -> AgentConfig:
+        return self._config
+
+    def as_tool(self, name: str, description: str, *, output_type: Any = None) -> AgentTool:
+        """
+        Expose this agent as a tool another agent can delegate to.
+
+        Each call inside an agent loop is a fresh child run with its own memory and audit chain. The child
+        keeps its provider, tools, and hooks; the calling run adds its hooks (run after the child's), its
+        approver and run store, and its remaining cost cap. The model passes ``task``; the tool returns the
+        child's answer, or its ``parsed`` value as JSON when ``output_type`` is set.
+        """
+        return AgentTool(self, name, description, output_type)
 
     def _check_run_id(self, run_id: str | None) -> None:
         if run_id is not None and self._config.cloud is not None and len(run_id) > _MAX_CLOUD_RUN_ID:
@@ -268,11 +286,16 @@ class Agent:
         checkpoint = await self._config.run_store.load(run_id)
         if checkpoint is None:
             raise RunNotFoundError(run_id)
+        self._check_schema(checkpoint)
+        return checkpoint
+
+    @staticmethod
+    def _check_schema(checkpoint: RunCheckpoint) -> None:
         if checkpoint.schema_version > CHECKPOINT_SCHEMA_VERSION:
             raise CheckpointError(
-                run_id, f"schema version {checkpoint.schema_version} is newer than {CHECKPOINT_SCHEMA_VERSION}"
+                checkpoint.run_id,
+                f"schema version {checkpoint.schema_version} is newer than {CHECKPOINT_SCHEMA_VERSION}",
             )
-        return checkpoint
 
     @staticmethod
     def _stored_result(checkpoint: RunCheckpoint, output_type: Any) -> AgentResult[Any]:
@@ -281,23 +304,48 @@ class Agent:
             result.parsed = OutputSpec.from_type(output_type).adapter.validate_python(result.parsed)
         return result
 
-    def _restore(self, checkpoint: RunCheckpoint, output_type: Any) -> None:
+    @staticmethod
+    def _check_output_type(checkpoint: RunCheckpoint, output_type: Any) -> None:
         name = OutputSpec.from_type(output_type).name if output_type is not None else None
         if name != checkpoint.output_type_name:
             raise CheckpointError(
                 checkpoint.run_id,
                 f"output_type {name!r} does not match the run's {checkpoint.output_type_name!r}",
             )
+
+    @staticmethod
+    def _restored_audit(checkpoint: RunCheckpoint) -> AuditChain:
+        try:
+            return AuditChain.restore(checkpoint.audit_events)
+        except AuditVerificationError as exc:
+            raise CheckpointError(checkpoint.run_id, f"audit chain failed verification: {exc}") from exc
+
+    def _restore(self, checkpoint: RunCheckpoint, output_type: Any) -> None:
+        self._check_output_type(checkpoint, output_type)
         if self._audit is not None:
-            try:
-                self._audit = AuditChain.restore(checkpoint.audit_events)
-            except AuditVerificationError as exc:
-                raise CheckpointError(checkpoint.run_id, f"audit chain failed verification: {exc}") from exc
+            self._audit = self._restored_audit(checkpoint)
         self._memory.clear()
         self._memory.add_many(checkpoint.messages)
 
-    def _make_loop(self) -> AgentLoop:
-        return AgentLoop(
+    async def _open_delegated(
+        self, run_id: str, output_type: Any, **overrides: Any
+    ) -> tuple[AgentLoop, RunCheckpoint | None]:
+        """A loop for one delegated run over fresh memory and audit, restored from its checkpoint if unfinished."""
+        memory = InMemoryStore(window=self._config.memory_window)
+        audit = AuditChain() if self._config.audit_enabled else None
+        store: RunStore | None = overrides.get("run_store", self._config.run_store)
+        checkpoint = await store.load(run_id) if store is not None else None
+        if checkpoint is not None:
+            self._check_schema(checkpoint)
+            if checkpoint.status != "completed":
+                self._check_output_type(checkpoint, output_type)
+                if audit is not None:
+                    audit = self._restored_audit(checkpoint)
+                memory.add_many(checkpoint.messages)
+        return self._make_loop(memory=memory, audit=audit, **overrides), checkpoint
+
+    def _make_loop(self, **overrides: Any) -> AgentLoop:
+        kwargs: dict[str, Any] = dict(
             provider=self._provider,
             registry=self._registry,
             memory=self._memory,
@@ -330,7 +378,10 @@ class Agent:
             ),
             context_budget_tokens=self._config.context_budget_tokens,
             run_store=self._config.run_store,
+            max_delegation_depth=self._config.max_delegation_depth,
         )
+        kwargs.update(overrides)
+        return AgentLoop(**kwargs)
 
     @property
     def audit(self) -> AuditChain | None:

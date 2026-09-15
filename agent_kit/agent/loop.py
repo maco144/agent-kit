@@ -103,6 +103,10 @@ class AgentLoop:
         request_options: RequestOptions | None = None,
         context_budget_tokens: int | None = None,
         run_store: RunStore | None = None,
+        delegation_depth: int = 0,
+        max_delegation_depth: int = 5,
+        parent_run_id: str | None = None,
+        parent_call_id: str | None = None,
     ) -> None:
         self._provider = provider
         self._registry = registry
@@ -135,6 +139,10 @@ class AgentLoop:
         self._pending_stop: RunStoppedByHookError | None = None
         self._turns: list[Turn] = []
         self._checkpointer = Checkpointer(run_store) if run_store is not None else None
+        self._delegation_depth = delegation_depth  # 0 for a top-level run
+        self._max_delegation_depth = max_delegation_depth
+        self._parent_run_id = parent_run_id  # set on delegated (child) runs
+        self._parent_call_id = parent_call_id
         self._prompt = ""
         self._output_type_name: str | None = None
         self._pending: PendingTurn | None = None  # the model turn whose tool calls are being resolved
@@ -236,6 +244,7 @@ class AgentLoop:
                 run_id=run_id,
                 model=self._model or self._provider.config.default_model,
                 prompt=prompt,
+                parent_run_id=self._parent_run_id,
             )
 
         with self._tracer.span("agent.run", kind=SpanKind.AGENT, run_id=run_id) as root_span:
@@ -530,6 +539,8 @@ class AgentLoop:
             audit_events=self._audit.events() if self._audit else [],
             pending=self._pending.model_copy(deep=True) if self._pending else None,
             result=result,
+            parent_run_id=self._parent_run_id,
+            parent_call_id=self._parent_call_id,
         )
 
     async def _checkpoint(
@@ -647,6 +658,10 @@ class AgentLoop:
     def _totals(self) -> tuple[float, int]:
         """Cost and tokens of this run's turns (the tracer's totals span every run on the agent)."""
         return sum(t.cost.cost_usd for t in self._turns), sum(t.cost.total_tokens for t in self._turns)
+
+    def spend(self) -> tuple[float, int]:
+        """This run's cost and tokens so far, delegated runs included — also for a run that raised."""
+        return self._run_cost_usd, self._totals()[1]
 
     def _trim_context(self, turn: int, system: str, tools: list[ToolSchema]) -> None:
         """Cut history once to half the token budget when the next request would exceed it."""
