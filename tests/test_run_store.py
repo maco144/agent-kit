@@ -95,3 +95,24 @@ async def test_checkpointer_tracks_versions_and_fail(store):
     await cp.fail("RuntimeError: boom")
     failed = await store.load("r1")
     assert (failed.status, failed.error, failed.version, failed.turn_count) == ("failed", "RuntimeError: boom", 4, 2)
+
+
+def test_checkpoints_without_delegation_fields_still_load():
+    data = checkpoint().model_dump(mode="json")
+    for key in ("parent_run_id", "parent_call_id"):
+        data.pop(key)
+    for key in ("delegated_cost_usd", "delegated_tokens", "delegated_root_hash"):
+        data["pending"].pop(key)
+    for approval in data["pending"]["approvals"]:
+        approval.pop("run_id")
+    for result in data["pending"]["results"].values():
+        result.pop("cost_usd")
+        result.pop("tokens")
+
+    cp = RunCheckpoint.model_validate(data)
+
+    assert (cp.parent_run_id, cp.parent_call_id) == (None, None)
+    assert cp.pending is not None
+    assert (cp.pending.delegated_cost_usd, cp.pending.delegated_tokens, cp.pending.delegated_root_hash) == ({}, {}, {})
+    assert cp.pending.approvals[0].run_id is None
+    assert (cp.pending.results["c0"].cost_usd, cp.pending.results["c0"].tokens) == (0.0, 0)

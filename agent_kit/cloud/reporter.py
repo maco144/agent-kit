@@ -109,13 +109,18 @@ class CloudReporter:
     # Lifecycle hooks — called by AgentLoop
     # ------------------------------------------------------------------
 
-    async def on_run_start(self, run_id: str, model: str | None, prompt: str) -> None:
+    async def on_run_start(
+        self, run_id: str, model: str | None, prompt: str, parent_run_id: str | None = None
+    ) -> None:
+        payload: dict[str, Any] = {"model": model, "prompt_hash": _sha256(prompt)}
+        if parent_run_id is not None:
+            payload["parent_run_id"] = parent_run_id
         await self._enqueue(CloudEvent(
             event_type=EventType.RUN_START,
             run_id=run_id,
             agent_name=self._agent_name,
             project=self._project,
-            payload={"model": model, "prompt_hash": _sha256(prompt)},
+            payload=payload,
         ))
 
     async def on_turn_complete(

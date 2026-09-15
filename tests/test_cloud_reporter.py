@@ -331,3 +331,12 @@ def test_submit_threadsafe_without_a_loop_queues_for_later_flush():
 def test_reporter_exposes_project_and_agent_name():
     reporter = make_reporter(project="billing", agent_name="assistant")
     assert (reporter.project, reporter.agent_name) == ("billing", "assistant")
+
+
+async def test_run_start_carries_parent_run_id_only_when_set():
+    reporter = make_reporter()
+    await reporter.on_run_start(run_id="child", model=None, prompt="hi", parent_run_id="parent")
+    await reporter.on_run_start(run_id="top", model=None, prompt="hi")
+    child, top = reporter._queue.get_nowait(), reporter._queue.get_nowait()
+    assert child.payload["parent_run_id"] == "parent"
+    assert "parent_run_id" not in top.payload

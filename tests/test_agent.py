@@ -320,3 +320,15 @@ async def test_result_totals_cover_only_this_run(mock_provider):
     assert second.total_tokens == first.total_tokens == 15
     assert second.run_id and second.run_id != first.run_id
     assert (second.status, second.pending_approvals) == ("completed", [])
+
+
+async def test_long_run_id_rejected_when_reporting_to_cloud(mock_provider):
+    from agent_kit.cloud.reporter import CloudReporter
+
+    reporting = Agent(mock_provider, config=AgentConfig(cloud=CloudReporter(api_key="akt_test", project="p")))
+    with pytest.raises(ValueError, match="at most 36 characters"):
+        await reporting.run("hi", run_id="x" * 37)
+    with pytest.raises(ValueError, match="at most 36 characters"):
+        [c async for c in reporting.stream("hi", run_id="x" * 37)]
+    assert (await reporting.run("hi", run_id="x" * 36)).run_id == "x" * 36
+    assert (await Agent(mock_provider).run("hi", run_id="x" * 37)).run_id == "x" * 37

@@ -20,6 +20,9 @@ class PendingTurn(BaseModel):
     results: dict[str, ToolResult] = Field(default_factory=dict)  # call_id → final (post-hook) result
     started: list[str] = Field(default_factory=list)  # call_ids whose tool execution began
     approvals: list[PendingApproval] = Field(default_factory=list)  # calls awaiting a decision
+    delegated_cost_usd: dict[str, float] = Field(default_factory=dict)  # call_id → child spend added to the run
+    delegated_tokens: dict[str, int] = Field(default_factory=dict)
+    delegated_root_hash: dict[str, str] = Field(default_factory=dict)  # call_id → completed child's audit root
 
 
 class RunCheckpoint(BaseModel):
@@ -46,6 +49,8 @@ class RunCheckpoint(BaseModel):
     pending: PendingTurn | None = None
     result: dict[str, Any] | None = None
     error: str | None = None
+    parent_run_id: str | None = None  # set on delegated (child) runs
+    parent_call_id: str | None = None
 
 
 class RunSummary(BaseModel):

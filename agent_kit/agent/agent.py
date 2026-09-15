@@ -26,6 +26,8 @@ from agent_kit.types import (
 
 T = TypeVar("T")
 
+_MAX_CLOUD_RUN_ID = 36  # agent-kit Cloud stores run ids as String(36) and addresses them in URL paths
+
 if TYPE_CHECKING:
     from agent_kit.cloud.reporter import CloudReporter
     from agent_kit.hooks import Approver, Hooks
@@ -157,6 +159,10 @@ class Agent:
         self._registry.register(t)
         return self
 
+    def _check_run_id(self, run_id: str | None) -> None:
+        if run_id is not None and self._config.cloud is not None and len(run_id) > _MAX_CLOUD_RUN_ID:
+            raise ValueError("run_id must be at most 36 characters when reporting to agent-kit Cloud")
+
     @overload
     async def run(
         self, prompt: str, *, output_type: type[T], run_id: str | None = None, **context: Any
@@ -184,6 +190,7 @@ class Agent:
             ProviderError: if the LLM call fails and retries are exhausted
             OutputValidationError: if a typed answer never validates
         """
+        self._check_run_id(run_id)
         self.last_result = await self._make_loop().run(prompt, output_type=output_type, run_id=run_id, **context)
         return self.last_result
 
@@ -202,6 +209,7 @@ class Agent:
         With ``output_type``, chunks are the raw JSON of each answer (including invalid attempts before
         a repair); ``agent.last_result.parsed`` holds the validated value.
         """
+        self._check_run_id(run_id)
         loop = self._make_loop()
         async for chunk in loop.stream(prompt, output_type=output_type, run_id=run_id, **context):
             yield chunk

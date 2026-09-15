@@ -65,6 +65,8 @@ class ToolResult(BaseModel):
     error: str | None = None
     duration_ms: int = 0
     idempotency_key: str | None = None
+    cost_usd: float = 0.0  # spend incurred inside the tool (delegated agent runs)
+    tokens: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +116,7 @@ class PendingApproval(BaseModel):
     arguments: dict[str, Any]
     reason: str | None = None
     turn: int
+    run_id: str | None = None  # run that owns the gated call; None for the run's own calls
 
 
 class AgentResult(BaseModel, Generic[T]):
