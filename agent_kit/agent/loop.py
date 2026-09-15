@@ -565,6 +565,8 @@ class AgentLoop:
             if tc.call_id in pending.results:
                 return
             approval = next((a for a in pending.approvals if a.call_id == tc.call_id), None)
+            prefix = f"{tc.call_id}/"
+            delegated = [a for a in pending.approvals if a.call_id.startswith(prefix)]
             result: ToolResult | None
             if approval is not None:
                 if tc.call_id not in answers:
@@ -583,6 +585,17 @@ class AgentLoop:
                     result = ToolResult(
                         call_id=tc.call_id, tool_name=tc.tool_name, output=None, error=f"Tool call denied: {reason}"
                     )
+            elif delegated:
+                # Approvals parked by a suspended child run: route this call's answers down to it
+                if not any(a.call_id in answers for a in delegated):
+                    return
+                for a in delegated:
+                    pending.approvals.remove(a)
+                child_answers = {k[len(prefix):]: v for k, v in answers.items() if k.startswith(prefix)}
+                result = await self._run_tool(tc, turn_number, gate=False, approvals=child_answers)
+            elif tc.call_id in pending.started and self._resumes_delegation(tc.tool_name):
+                # The child run checkpoints its own tools: resume or replay it rather than report an interruption
+                result = await self._run_tool(tc, turn_number, gate=False)
             elif tc.call_id in pending.started and not self._is_idempotent(tc.tool_name):
                 # Started before a crash with no recorded result: never run a side effect twice
                 self._audit_event("tool_interrupted", tc.tool_name, {"call_id": tc.call_id})
@@ -639,6 +652,15 @@ class AgentLoop:
     def _is_idempotent(self, tool_name: str) -> bool:
         try:
             return self._registry.get(tool_name).schema.idempotent
+        except Exception:
+            return False
+
+    def _resumes_delegation(self, tool_name: str) -> bool:
+        """A started agent-tool call resumes its checkpointed child run instead of counting as interrupted."""
+        if self._checkpointer is None:
+            return False
+        try:
+            return isinstance(self._registry.get(tool_name), AgentTool)
         except Exception:
             return False
 

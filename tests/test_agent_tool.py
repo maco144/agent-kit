@@ -418,3 +418,130 @@ async def test_suspended_child_suspends_the_parent(db):
     assert stored.pending.delegated_cost_usd == {"research-0": pytest.approx(0.02), "refunds-1": pytest.approx(0.01)}
     child = await SQLiteRunStore(db).load(child_id)
     assert child is not None and child.status == "suspended"
+
+
+# --- Resuming delegations --------------------------------------------------------------------------
+
+
+def event_types(agent: Agent) -> list[str]:
+    assert agent.audit is not None
+    return [e.event_type for e in agent.audit.events()]
+
+
+async def test_child_approval_resumes_from_another_process(db):
+    await ticket_run(db)
+
+    lead_provider = Scripted(final("ticket handled"))
+    second = lead(
+        db, lead_provider,
+        Agent(Scripted()).as_tool("research", "Investigate."),  # already completed: any model call would fail
+        refunds_agent(Scripted(final("refunded 42"))).as_tool("refunds", "Refunds."),
+    )
+    done = await second.resume("lead-1", approvals={"refunds-1/refund-0": True})
+
+    assert (done.status, done.output) == ("completed", "ticket handled")
+    assert executed == ["refund:42"]
+    assert [m.content for m in tool_messages(lead_provider)] == ['"findings"', '"refunded 42"']
+    assert done.total_cost_usd == pytest.approx(0.06)  # lead 0.02 + research 0.02 + refunds 0.02
+    child = await SQLiteRunStore(db).load(child_run_id("lead-1", "refunds-1"))
+    assert child is not None and child.status == "completed"
+    assert second.audit is not None and second.audit.verify()
+
+
+async def test_partial_child_answers_keep_both_runs_suspended(db):
+    refunds = refunds_agent(Scripted(calls(("refund", {"order_id": "1"}), ("refund", {"order_id": "2"}))))
+    await lead(db, Scripted(calls(("refunds", {"task": "two refunds"}))), refunds.as_tool("refunds", "R.")).run(
+        "go", run_id="lead-1")
+
+    idle = lead(db, Scripted(), refunds_agent(Scripted()).as_tool("refunds", "R."))
+    partial = await idle.resume("lead-1", approvals={"refunds-0/refund-0": True})
+    assert partial.status == "suspended"
+    assert [p.call_id for p in partial.pending_approvals] == ["refunds-0/refund-1"]
+    assert executed == ["refund:1"]
+
+    lead_provider = Scripted(final("both refunded"))
+    done = await lead(db, lead_provider, refunds_agent(Scripted(final("done"))).as_tool("refunds", "R.")).resume(
+        "lead-1", approvals={"refunds-0/refund-1": True})
+    assert done.output == "both refunded" and executed == ["refund:1", "refund:2"]
+
+
+async def test_denied_child_approval_completes_the_child(db):
+    await ticket_run(db)
+    refunds_provider = Scripted(final("could not refund"))
+    lead_provider = Scripted(final("told the customer"))
+    done = await lead(db, lead_provider, Agent(Scripted()).as_tool("research", "I."),
+                      refunds_agent(refunds_provider).as_tool("refunds", "R.")).resume(
+        "lead-1", approvals={"refunds-1/refund-0": False})
+    assert executed == []
+    assert tool_messages(refunds_provider)[0].content == "Error: Tool call denied: approval denied"
+    assert done.output == "told the customer"
+
+
+async def test_two_level_nesting_routes_approvals_down(db):
+    def desk(desk_provider: Scripted, refunds_provider: Scripted) -> AgentTool:
+        refunds = refunds_agent(refunds_provider).as_tool("refunds", "Refunds.")
+        return Agent(desk_provider, tools=[refunds], config=AgentConfig(retry_policy=NO_RETRY)).as_tool("desk", "Desk.")
+
+    result = await lead(db, Scripted(calls(("desk", {"task": "ticket"}))),
+                        desk(Scripted(calls(("refunds", {"task": "refund 7"}))), Scripted(calls(("refund", {"order_id": "7"}))))
+                        ).run("go", run_id="lead-1")
+
+    desk_id = child_run_id("lead-1", "desk-0")
+    assert [(p.call_id, p.run_id) for p in result.pending_approvals] == [
+        ("desk-0/refunds-0/refund-0", child_run_id(desk_id, "refunds-0"))
+    ]
+
+    done = await lead(db, Scripted(final("closed")), desk(Scripted(final("desk done")), Scripted(final("refunded")))
+                      ).resume("lead-1", approvals={"desk-0/refunds-0/refund-0": True})
+    assert (done.output, executed) == ("closed", ["refund:7"])
+
+
+async def test_crash_inside_a_child_resumes_the_child(db):
+    def orders(provider: Scripted) -> AgentTool:
+        return Agent(provider, tools=[lookup], config=AgentConfig(retry_policy=NO_RETRY)).as_tool("orders", "Orders.")
+
+    with pytest.raises(SimulatedCrash):
+        await lead(db, Scripted(calls(("orders", {"task": "check 5"}))),
+                   orders(Scripted(calls(("lookup", {"order_id": "5"})), SimulatedCrash())), approver=None).run(
+            "go", run_id="lead-1")
+    stored = await SQLiteRunStore(db).load("lead-1")
+    assert stored is not None and stored.pending is not None and stored.pending.started == ["orders-0"]
+
+    lead_provider = Scripted(final("order 5 is paid"))
+    resumed = lead(db, lead_provider, orders(Scripted(final("paid"))), approver=None)
+    done = await resumed.resume("lead-1")
+
+    assert (done.output, executed) == ("order 5 is paid", ["lookup:5"])
+    assert tool_messages(lead_provider)[0].content == '"paid"'
+    assert "tool_interrupted" not in event_types(resumed)
+
+
+async def test_completed_child_is_replayed_after_a_parent_crash(db):
+    def crash(ctx: Any) -> None:
+        raise SimulatedCrash
+
+    with pytest.raises(SimulatedCrash):
+        await lead(db, Scripted(calls(("research", {"task": "q"}))),
+                   Agent(Scripted(final("findings"))).as_tool("research", "I."),
+                   approver=None, hooks=Hooks(after_tool=[crash])).run("go", run_id="lead-1")
+
+    lead_provider = Scripted(final("ok"))
+    await lead(db, lead_provider, Agent(Scripted()).as_tool("research", "I."), approver=None).resume("lead-1")
+    assert tool_messages(lead_provider)[0].content == '"findings"'
+
+
+async def test_crash_before_the_child_started_runs_it_on_resume(db, monkeypatch):
+    async def crash(self: AgentTool, task: str, ctx: DelegationContext) -> Any:
+        raise SimulatedCrash
+
+    monkeypatch.setattr(AgentTool, "delegate", crash)
+    with pytest.raises(SimulatedCrash):
+        await lead(db, Scripted(calls(("research", {"task": "q"}))), Agent(Scripted()).as_tool("research", "I."),
+                   approver=None).run("go", run_id="lead-1")
+    monkeypatch.undo()
+    assert await SQLiteRunStore(db).load(child_run_id("lead-1", "research-0")) is None
+
+    lead_provider = Scripted(final("ok"))
+    await lead(db, lead_provider, Agent(Scripted(final("findings"))).as_tool("research", "I."), approver=None).resume(
+        "lead-1")
+    assert tool_messages(lead_provider)[0].content == '"findings"'
