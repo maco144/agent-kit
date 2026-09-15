@@ -23,10 +23,12 @@ from agent_kit.exceptions import (
 )
 from agent_kit.hooks import (
     ApprovalRequest,
+    Decision,
     LLMCallContext,
     Suspend,
     ToolCallContext,
     ToolResultContext,
+    flagged_payload,
     run_hook,
 )
 from agent_kit.memory.budget import DEFAULT_TOKENS_PER_CHAR, plan_trim, prompt_chars
@@ -953,6 +955,8 @@ class AgentLoop:
                 duration_ms=result.duration_ms,
             )
             decision = await run_hook(hook, ctx)
+            if decision.findings:
+                await self._record_flagged(tc, decision)
             if decision.kind == "allow":
                 continue
             if decision.kind == "replace":
@@ -965,6 +969,19 @@ class AgentLoop:
                 reason = self._deny_tool(ctx, "after_tool", f"invalid decision '{decision.kind}' from after_tool hook")
             return result.model_copy(update={"output": None, "error": f"Tool output blocked: {reason}"})
         return result.model_copy(update={"output": output})
+
+    async def _record_flagged(self, tc: ToolCall, decision: Decision) -> None:
+        """Audit and report the findings an after_tool hook attached to its decision."""
+        action = {"allow": "allowed", "replace": "wrapped"}.get(decision.kind, "blocked")
+        if decision.kind == "deny" and decision.stop_run:
+            action = "stopped"
+        self._audit_event(
+            "tool_output_flagged", tc.tool_name, flagged_payload(tc.call_id, tc.tool_name, action, decision.findings)
+        )
+        if self._reporter:
+            await self._reporter.on_tool_output_flagged(
+                self._run_id, tc.tool_name, tc.call_id, action, decision.findings
+            )
 
     async def _gate_llm(self, turn: int, message_count: int) -> None:
         if self._hooks is None or not self._hooks.before_llm:

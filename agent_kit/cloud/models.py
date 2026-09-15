@@ -17,6 +17,7 @@ class EventType(str, Enum):
     RUN_ERROR = "run_error"
     CIRCUIT_STATE_CHANGE = "circuit_state_change"
     AUDIT_FLUSH = "audit_flush"
+    TOOL_OUTPUT_FLAGGED = "tool_output_flagged"
 
 
 class CloudEvent(BaseModel):

@@ -159,3 +159,12 @@ class CheckpointError(AgentKitError):
         super().__init__(f"Checkpoint for run '{run_id}' cannot be resumed: {reason}")
         self.run_id = run_id
         self.reason = reason
+
+
+class ScannerUnavailableError(AgentKitError):
+    """A scanner configured to fail closed could not complete its checks."""
+
+    def __init__(self, scanner: str, reason: str) -> None:
+        super().__init__(f"Scanner '{scanner}' unavailable: {reason}")
+        self.scanner = scanner
+        self.reason = reason

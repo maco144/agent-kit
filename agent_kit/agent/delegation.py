@@ -43,13 +43,17 @@ def child_run_id(parent_run_id: str, call_id: str) -> str:
 
 
 def stack_hooks(child: Hooks | None, parent: Hooks | None) -> Hooks | None:
-    """The child's hooks run first, then the parent's; any deny wins."""
+    """The child's hooks run first, then the parent's; any deny wins. A hook on both levels runs once."""
     if child is None or parent is None:
         return child or parent
+
+    def merged(own: list[Any], inherited: list[Any]) -> list[Any]:
+        return [*own, *(h for h in inherited if not any(h is o for o in own))]
+
     return Hooks(
-        before_tool=[*child.before_tool, *parent.before_tool],
-        after_tool=[*child.after_tool, *parent.after_tool],
-        before_llm=[*child.before_llm, *parent.before_llm],
+        before_tool=merged(child.before_tool, parent.before_tool),
+        after_tool=merged(child.after_tool, parent.after_tool),
+        before_llm=merged(child.before_llm, parent.before_llm),
     )
 
 

@@ -237,6 +237,25 @@ class AuditEventRecord(BaseModel, frozen=True):
 
 
 # ---------------------------------------------------------------------------
+# Tool output scanning
+# ---------------------------------------------------------------------------
+
+Severity = Literal["low", "medium", "high", "critical"]
+SEVERITY_ORDER: dict[str, int] = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+
+class Finding(BaseModel, frozen=True):
+    """One thing a scanner found in tool output. Never contains the output itself."""
+
+    scanner: str  # e.g. "patterns", "nullcone"
+    rule: str  # e.g. "unicode_tags", "ioc_domain"
+    severity: Severity
+    message: str  # fixed description of the rule, not the matched text
+    location: str = "$"  # JSON path of the span, "$error" for the error text
+    indicator: str | None = None  # matched IOC value (NullconeScanner only)
+
+
+# ---------------------------------------------------------------------------
 # Pipeline / DAG
 # ---------------------------------------------------------------------------
 

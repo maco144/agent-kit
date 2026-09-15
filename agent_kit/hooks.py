@@ -21,9 +21,11 @@ approver, a denied or timed-out approval. Decisions are recorded in the audit ch
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal
+
+from agent_kit.types import SEVERITY_ORDER, Finding
 
 DecisionKind = Literal["allow", "deny", "ask", "replace"]
 
@@ -34,22 +36,23 @@ class Decision:
     reason: str | None = None
     output: Any = None
     stop_run: bool = False
+    findings: tuple[Finding, ...] = ()  # recorded as tool_output_flagged when returned from an after_tool hook
 
     @classmethod
-    def allow(cls) -> Decision:
-        return cls("allow")
+    def allow(cls, findings: Sequence[Finding] = ()) -> Decision:
+        return cls("allow", findings=tuple(findings))
 
     @classmethod
-    def deny(cls, reason: str, stop_run: bool = False) -> Decision:
-        return cls("deny", reason=reason, stop_run=stop_run)
+    def deny(cls, reason: str, stop_run: bool = False, findings: Sequence[Finding] = ()) -> Decision:
+        return cls("deny", reason=reason, stop_run=stop_run, findings=tuple(findings))
 
     @classmethod
     def ask(cls, reason: str | None = None) -> Decision:
         return cls("ask", reason=reason)
 
     @classmethod
-    def replace(cls, output: Any, reason: str | None = None) -> Decision:
-        return cls("replace", reason=reason, output=output)
+    def replace(cls, output: Any, reason: str | None = None, findings: Sequence[Finding] = ()) -> Decision:
+        return cls("replace", reason=reason, output=output, findings=tuple(findings))
 
 
 @dataclass(frozen=True)
@@ -127,6 +130,27 @@ async def run_hook(hook: Callable[[Any], Any], ctx: Any) -> Decision:
     if not isinstance(result, Decision):
         return Decision.deny(f"hook error: returned {type(result).__name__}, expected Decision or None")
     return result
+
+
+def flagged_payload(call_id: str, tool_name: str, action: str, findings: Sequence[Finding]) -> dict[str, Any]:
+    """Audit and Cloud payload for a decision that carries findings: rule metadata only, never tool output."""
+    top = max(findings, key=lambda f: SEVERITY_ORDER[f.severity])
+    return {
+        "call_id": call_id,
+        "tool_name": tool_name,
+        "action": action,
+        "max_severity": top.severity,
+        "findings": [
+            {
+                "scanner": f.scanner,
+                "rule": f.rule,
+                "severity": f.severity,
+                "location": f.location,
+                "indicator": f.indicator,
+            }
+            for f in findings
+        ],
+    }
 
 
 def require_approval(*tool_names: str, reason: str | None = None) -> BeforeToolHook:

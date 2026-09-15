@@ -12,10 +12,13 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from agent_kit.cloud.models import CloudEvent, EventType
+from agent_kit.hooks import flagged_payload
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from agent_kit.cloud.budgets import BudgetGuard
-    from agent_kit.types import AgentResult, AuditEventRecord, Turn
+    from agent_kit.types import AgentResult, AuditEventRecord, Finding, Turn
 
 logger = logging.getLogger("agent_kit.cloud")
 
@@ -192,6 +195,17 @@ class CloudReporter:
                 "new_state": new_state,
                 "failure_count": failure_count,
             },
+        ))
+
+    async def on_tool_output_flagged(
+        self, run_id: str, tool_name: str, call_id: str, action: str, findings: Sequence[Finding]
+    ) -> None:
+        await self._enqueue(CloudEvent(
+            event_type=EventType.TOOL_OUTPUT_FLAGGED,
+            run_id=run_id,
+            agent_name=self._agent_name,
+            project=self._project,
+            payload=flagged_payload(call_id, tool_name, action, findings),
         ))
 
     async def on_audit_flush(
