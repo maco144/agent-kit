@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
+import injection_fixtures as fx
 import pytest
 
 from agent_kit import SUSPEND, Agent, AgentConfig, tool
@@ -15,7 +17,7 @@ from agent_kit.durable import SQLiteRunStore
 from agent_kit.exceptions import RunStoppedByHookError
 from agent_kit.hooks import Decision, Hooks, ToolResultContext, require_approval
 from agent_kit.providers.base import ProviderConfig
-from agent_kit.scanning import ENVELOPE_KEY, TextSpan, collect_spans, scan_tool_output
+from agent_kit.scanning import ENVELOPE_KEY, PatternRule, PatternScanner, TextSpan, collect_spans, scan_tool_output
 from agent_kit.scanning.policy import NOTICE
 from agent_kit.types import CostSummary, Finding, Message, RetryPolicyConfig, ToolCall, Turn
 
@@ -371,3 +373,70 @@ async def test_durable_resume_does_not_rescan(tmp_path):
     assert suspended.status == "suspended"
     await lead(Scripted(final())).resume("t1", approvals={"refund-1": True})
     assert [s.text for s in scanner.seen].count("page text") == 1
+
+
+# --- PatternScanner ---------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("rule", "severity", "payload"), [
+    ("unicode_tags", "critical", "UNICODE_TAG_INSTRUCTION"),
+    ("role_token", "critical", "CHATML_ROLE_TOKEN"),
+    ("role_token", "critical", "LLAMA_INST_TOKEN"),
+    ("role_token", "critical", "FAKE_SYSTEM_TAG"),
+    ("role_token", "critical", "FAKE_TOOL_RESULT_CLOSE"),
+    ("instruction_override", "high", "INSTRUCTION_OVERRIDE"),
+    ("hidden_text", "high", "HIDDEN_BIDI"),
+    ("hidden_text", "high", "ZERO_WIDTH_CLUSTER"),
+    ("encoded_payload", "high", "ENCODED_OVERRIDE"),
+    ("exfil_markdown", "medium", "EXFIL_MARKDOWN_IMAGE"),
+    ("exfil_markdown", "medium", "EXFIL_LONG_QUERY"),
+    ("persona_switch", "medium", "PERSONA_SWITCH"),
+])
+async def test_each_rule_flags_its_payload(rule, severity, payload):
+    findings = await PatternScanner().scan([TextSpan("$.body", fx.PAYLOADS[payload])])
+    assert [(f.scanner, f.rule, f.severity, f.location) for f in findings] == [("patterns", rule, severity, "$.body")]
+    assert findings[0].message and fx.PAYLOADS[payload] not in findings[0].message
+
+
+async def test_benign_text_is_not_flagged():
+    spans = [TextSpan(f"$[{i}]", text) for i, text in enumerate(fx.BENIGN)]
+    assert await PatternScanner().scan(spans) == []
+
+
+async def test_disable_and_extra_rules():
+    scanner = PatternScanner(
+        disable=["persona_switch"],
+        extra_rules=[PatternRule("internal_hostname", "low", "internal hostname", lambda t: "corp.internal" in t)],
+    )
+    assert "persona_switch" not in [r.name for r in scanner.rules]
+    findings = await scanner.scan([TextSpan("$", fx.PERSONA_SWITCH), TextSpan("$.h", "db1.corp.internal")])
+    assert [(f.rule, f.location) for f in findings] == [("internal_hostname", "$.h")]
+    with pytest.raises(ValueError, match="unknown pattern rules"):
+        PatternScanner(disable=["no_such_rule"])
+
+
+async def test_pattern_scanner_through_the_agent_loop():
+    PAGES["/tags"] = fx.UNICODE_TAG_INSTRUCTION
+    PAGES["/exfil"] = fx.EXFIL_MARKDOWN_IMAGE
+    provider = Scripted(calls(("fetch_page", {"url": "/tags"}), ("fetch_page", {"url": "/exfil"})), final())
+    await scanned_agent(provider, PatternScanner()).run("go")
+    blocked, wrapped = tool_messages(provider)
+    assert blocked.content == "Error: Tool output blocked: possible prompt injection: unicode_tags (critical)"
+    assert json.loads(wrapped.content)[ENVELOPE_KEY]["rules"] == ["exfil_markdown"]
+
+
+def test_no_payloads_outside_the_fixtures_module():
+    root = Path(__file__).resolve().parent.parent
+    suffixes = {".py", ".md", ".json", ".toml", ".txt", ".yml", ".yaml"}
+    files = [root / "README.md", *(
+        p for folder in ("agent_kit", "tests", "examples", "docs", "specs")
+        for p in (root / folder).rglob("*")
+        if p.is_file() and p.suffix in suffixes and p.name != "injection_fixtures.py"
+    )]
+    offenders = [
+        (str(p.relative_to(root)), name)
+        for p in files
+        for name, value in fx.PAYLOADS.items()
+        if value in p.read_text(encoding="utf-8", errors="ignore")
+    ]
+    assert offenders == []
