@@ -1,6 +1,6 @@
 {
   "project": "agent-kit",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "server_version": "0.1.0",
   "generated": "2026-09-15",
   "description": "Production-ready framework for building AI agents. Type-safe. Observable. Circuit-broken.",
@@ -11,7 +11,10 @@
     "cli": "agent-kit = agent_kit.cli:main (verify)",
     "server": "server/app/main.py (uvicorn app.main:app)",
     "tests": "pytest",
-    "server_tests": "cd server && pytest"
+    "server_tests": "cd server && pytest",
+    "server_cli": "agentkit-server = app.cli:main (create-org, list-orgs, create-key, list-keys, revoke-key)",
+    "server_worker": "python -m app.worker (alerts, budgets, retention; 60s cadence)",
+    "server_stack": "cd server && docker compose up -d --build (api, worker, postgres)"
   },
   "public_api": {
     "agent_kit": [
@@ -539,11 +542,12 @@
       "provider_mocking": "fake clients recording request kwargs (respx does not intercept anthropic>=1.0 httpx2)"
     },
     "server": {
-      "collected": 166,
+      "collected": 174,
       "files": [
         "test_alerts.py",
         "test_audit_chain_append.py",
         "test_budgets.py",
+        "test_cli.py",
         "test_compliance.py",
         "test_ingest.py",
         "test_metrics.py",
@@ -551,7 +555,8 @@
         "test_otlp_ingest.py",
         "test_otlp_normalize.py",
         "test_support.py",
-        "test_tool_output_flagged.py"
+        "test_tool_output_flagged.py",
+        "test_worker.py"
       ],
       "helpers": [
         "server/tests/conftest.py",
@@ -579,16 +584,17 @@
     "cloud_monitored.py"
   ],
   "docs": [
-    "README.md",
-    "CONTRIBUTING.md",
     "CHANGELOG.md",
-    "examples/README.md",
-    "docs/cloud-quickstart.md",
-    "docs/self-hosting.md",
+    "CONTRIBUTING.md",
+    "README.md",
     "docs/api-reference.md",
-    "docs/troubleshooting.md"
+    "docs/cloud-quickstart.md",
+    "docs/deploy-rising.md",
+    "docs/self-hosting.md",
+    "docs/troubleshooting.md",
+    "examples/README.md"
   ],
-  "plans": "docs/superpowers/plans/ (12 files, 2026-09-13 to 2026-09-15)",
+  "plans": "docs/superpowers/plans/ (13 files, 2026-09-13 to 2026-09-15)",
   "specs": [
     "00-platform-overview",
     "01-audit-trail",
@@ -607,7 +613,8 @@
     "14-context-management",
     "15-durable-runs",
     "16-agent-as-tool",
-    "17-tool-output-scanning"
+    "17-tool-output-scanning",
+    "18-cloud-deployment"
   ],
   "ci": {
     "workflow": ".github/workflows/ci.yml",
@@ -626,5 +633,23 @@
       "alembic upgrade head"
     ],
     "examples": "byte-compile examples/"
+  },
+  "deployment": {
+    "files": [
+      "server/Dockerfile",
+      "server/docker-entrypoint.sh",
+      "server/docker-compose.yml",
+      "server/.env.example"
+    ],
+    "services": [
+      "db (postgres:16-alpine, volume agentkit-db)",
+      "api (uvicorn, published 127.0.0.1:${API_PORT:-8020})",
+      "worker (python -m app.worker)"
+    ],
+    "admin_cli": "agentkit-server create-org | list-orgs | create-key | list-keys | revoke-key",
+    "docs": [
+      "docs/self-hosting.md",
+      "docs/deploy-rising.md"
+    ]
   }
 }
