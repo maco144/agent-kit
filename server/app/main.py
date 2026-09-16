@@ -24,27 +24,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if os.environ.get("DATABASE_URL", "").startswith("sqlite"):
         await init_db()
 
-    # Start background alert evaluation worker (opt-in via env var)
+    # The alert worker normally runs as its own container (python -m app.worker).
+    # ENABLE_ALERT_WORKER=1 runs it in-process instead, for local development.
     worker_task = None
     if os.environ.get("ENABLE_ALERT_WORKER", "").lower() in ("1", "true"):
-        async def _alert_worker() -> None:
-            from app.alerting.evaluator import evaluate_all_rules
-            from app.database import SessionLocal
-            while True:
-                await asyncio.sleep(60)
-                try:
-                    async with SessionLocal() as db:
-                        await evaluate_all_rules(db)
-                        from app.budgets import evaluate_all_budgets
-                        await evaluate_all_budgets(db)
-                        from app.compliance.retention import purge_expired
-                        await purge_expired(db)
-                        await db.commit()
-                except Exception as exc:
-                    _log.warning("Alert worker error: %s", exc)
+        from app.worker import run_forever
 
-        worker_task = asyncio.create_task(_alert_worker(), name="agentkit-alert-worker")
-        _log.info("Alert evaluation worker started (60s cadence)")
+        worker_task = asyncio.create_task(run_forever(), name="agentkit-alert-worker")
+        _log.info("Alert evaluation worker started in-process (60s cadence)")
 
     yield
 
