@@ -2,74 +2,90 @@
 
 The `server/` directory contains the FastAPI backend that backs agent-kit Cloud. Run it yourself for air-gapped environments, compliance requirements, or cost control.
 
-## Architecture overview
+## What runs
+
+Three containers, one public entry point:
 
 ```
-SDK (CloudReporter)
-      │  POST /v1/events (gzip NDJSON)
-      ▼
-FastAPI server (server/)
-      │
-      ├── SQLite (dev/test)  ──or──  PostgreSQL (production)
-      │
-      ├── Alembic migrations (server/migrations/)
-      └── Background alert worker (opt-in)
+ SDK (CloudReporter) · Claude/OpenAI adapters · OTLP exporters
+                   │  HTTPS
+                   ▼
+        reverse proxy (Caddy/nginx, yours)
+                   │  127.0.0.1:8020
+       ┌───────────┴───────────┐
+       ▼                       ▼
+  api (uvicorn)          worker (alerts, budgets, retention)
+       │                       │
+       └────────▶ postgres ◀───┘   (named volume: agentkit-db)
 ```
+
+The API container applies Alembic migrations at start. The worker is a separate container so exactly one
+process evaluates alerts, however many API workers are serving traffic.
 
 ---
 
-## Local development
+## Quick start (Docker)
+
+```bash
+git clone https://github.com/maco144/agent-kit.git
+cd agent-kit/server
+cp .env.example .env
+
+# Fill in the two secrets
+python3 -c "import secrets; print('POSTGRES_PASSWORD=' + secrets.token_urlsafe(24))"
+python3 -c "import base64, os; print('AGENTKIT_SIGNING_KEY=' + base64.b64encode(os.urandom(32)).decode())"
+$EDITOR .env
+
+docker compose up -d --build
+curl http://127.0.0.1:8020/healthz     # {"status":"ok"}
+```
+
+`docker compose ps` shows `db`, `api`, and `worker`. The API is published on `127.0.0.1` only — put a reverse
+proxy in front of it to reach it from anywhere else (see [Put it behind TLS](#put-it-behind-tls)).
+
+---
+
+## Local development (no Docker)
 
 ```bash
 cd server
-
-# Install the server (editable, with dev tools)
 pip install -e ".[dev]"
 
-# Optional — defaults to sqlite+aiosqlite:///./agentkit_cloud.db
-export DATABASE_URL="sqlite+aiosqlite:///./agentkit.db"
-
-# Run migrations
+export DATABASE_URL="sqlite+aiosqlite:///./agentkit.db"   # or a postgresql+asyncpg:// URL
 alembic upgrade head
-
-# Start the server
 uvicorn app.main:app --reload --port 8000
 ```
 
-The server is now live at `http://localhost:8000`. Interactive API docs at `http://localhost:8000/docs`.
+Interactive API docs at `http://localhost:8000/docs`. For the alert worker in this mode, either run
+`python -m app.worker` in a second terminal or start the API with `ENABLE_ALERT_WORKER=1`.
 
 ---
 
 ## Create your first org and API key
 
-The server has no sign-up UI yet — provision via the database directly or with a seed script:
-
-```python
-# scripts/seed_org.py
-import asyncio, secrets, hashlib
-from app.database import SessionLocal
-from app.models import Organization, ApiKey
-
-async def seed():
-    raw_key = "akt_live_" + secrets.token_hex(24)
-    hashed = hashlib.sha256(raw_key.encode()).hexdigest()
-
-    async with SessionLocal() as db:
-        org = Organization(name="My Org")
-        db.add(org)
-        await db.flush()
-        db.add(ApiKey(org_id=org.id, name="default", key_prefix=raw_key[:13], key_hash=hashed))
-        await db.commit()
-
-    print(f"API key: {raw_key}")
-    print("Add to CloudReporter: CloudReporter(api_key=..., base_url='http://localhost:8000')")
-
-asyncio.run(seed())
-```
+The server has no sign-up UI yet. Use the `agentkit-server` CLI that ships in the image:
 
 ```bash
-python scripts/seed_org.py
+docker compose exec api agentkit-server create-org "My Org"
+# created org 'My Org' (free) with id 6f1e...  ← copy the id
+
+docker compose exec api agentkit-server create-key 6f1e... --name laptop
+# store this key now - it cannot be shown again:
+#   akt_live_...
 ```
+
+Other commands: `list-orgs`, `list-keys [--org <id>]`, `revoke-key <key-id>`. Keys are stored as SHA-256
+hashes with a 13-character prefix for identification, so a key is recoverable only at creation time.
+
+Point an agent at the server:
+
+```bash
+export AGENTKIT_BASE_URL=http://127.0.0.1:8020
+export AGENTKIT_API_KEY=akt_live_...
+```
+
+Without Docker, run the same commands directly: `agentkit-server create-org "My Org"` (it reads
+`DATABASE_URL` from the environment, like the server).
 
 ---
 
@@ -80,7 +96,10 @@ python scripts/seed_org.py
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DATABASE_URL` | Yes (production) | `sqlite+aiosqlite:///./agentkit_cloud.db` | SQLAlchemy async URL (e.g. `postgresql+asyncpg://user:pass@host/db`). SQLite URLs auto-create tables on startup; anything else expects `alembic upgrade head`. |
-| `ENABLE_ALERT_WORKER` | No | unset | `1` or `true` runs the 60-second worker in this process: alert evaluation, budget evaluation, and audit retention purges |
+| `ENABLE_ALERT_WORKER` | No | unset | `1` or `true` runs the 60-second worker inside the API process (local development). The compose stack sets `0` and runs `worker` as its own container |
+| `POSTGRES_PASSWORD` | Yes (compose) | unset | Password for the bundled Postgres; compose builds `DATABASE_URL` from it |
+| `API_PORT` | No | `8020` | Host port the API is published on, bound to `127.0.0.1` |
+| `RUN_MIGRATIONS` | No | `1` | `0` skips `alembic upgrade head` in the entrypoint (the worker container sets this) |
 | `AGENTKIT_SIGNING_KEY` | Recommended | unset | Base64 32-byte Ed25519 seed that signs evidence bundles and deletion receipts; never stored. Generate with `python -c "import base64,os;print(base64.b64encode(os.urandom(32)).decode())"`. Unset → a key is generated and its seed stored in the database |
 | `AGENTKIT_SIGNING_KEY_ID` | No | derived | Key ID published for the env key (default `ak-` + 12 hex of its public key hash). Changing the key retires the old one but keeps it published |
 | `SMTP_HOST` | For email alerts | unset | SMTP server. Unset = email channels log instead of sending |
@@ -101,23 +120,45 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 
 ### Docker
 
-```dockerfile
-FROM python:3.12-slim
-WORKDIR /app
-COPY server/ .
-RUN pip install --no-cache-dir .
-ENV DATABASE_URL="postgresql+asyncpg://agentkit:password@db/agentkit"
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4"]
-```
+The image and stack ship in `server/`: `Dockerfile`, `docker-entrypoint.sh` (runs `alembic upgrade head`,
+then the given command), `docker-compose.yml`, and `.env.example`. Build and run them with the Quick start
+above, or build the image alone:
 
 ```bash
-docker build -t agentkit-server .
-docker run -p 8000:8000 \
-  -e DATABASE_URL="postgresql+asyncpg://..." \
-  agentkit-server
+docker build -t agentkit-server server/
 ```
 
-### Kubernetes (minimal)
+Environment contract for the compose stack: `POSTGRES_PASSWORD` (required), `API_PORT` (default 8020),
+`AGENTKIT_SIGNING_KEY`, and any `SMTP_*` settings. `RUN_MIGRATIONS=0` skips migrations for a container (the
+worker uses this so only the API migrates).
+
+### Put it behind TLS
+
+The API binds to `127.0.0.1` on purpose — terminate TLS in a reverse proxy:
+
+```caddyfile
+agentkit.example.com {
+	reverse_proxy 127.0.0.1:8020
+}
+```
+
+nginx equivalent:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name agentkit.example.com;
+    location / {
+        proxy_pass http://127.0.0.1:8020;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+```
+
+### Kubernetes (untested sketch)
+
+The compose stack above is what we run. This manifest is a starting point, not a tested deployment.
 
 ```yaml
 apiVersion: apps/v1
@@ -171,6 +212,9 @@ Migration history:
 | `002` | Metrics schema: active_run_cache, agent_metric_snapshots, circuit_breaker_events |
 | `003` | Alerting: alert_channels, alert_rules, alert_firings |
 | `004` | Support tiers: adds `tier` and `plan_metadata` to organizations |
+| `005` | OTLP ingest: `audit_runs.chain_origin`, `active_run_cache.last_event_at` / `failure_message` |
+| `006` | Fleet budgets: `budgets` |
+| `007` | Compliance: `signing_keys`, `legal_holds`, `deletion_receipts`, `organizations.audit_retention_days` |
 
 ---
 
@@ -191,15 +235,20 @@ Then create a channel with `{"type": "email", "config": {"to": ["oncall@yourcomp
 
 ## Alert worker
 
-The background alert worker evaluates polled alert rules (cost anomaly, error rate) every 60 seconds. It is opt-in to avoid unwanted side effects in test or read-only deployments.
+One container (`python -m app.worker`) evaluates polled alert rules (cost anomaly, error rate), fleet budgets,
+and audit retention purges every 60 seconds. The compose stack runs exactly one, and sets
+`ENABLE_ALERT_WORKER=0` on the API.
+
+Run more than one evaluator and every polled alert fires once per evaluator, so keep it to a single container
+(or a single process with `ENABLE_ALERT_WORKER=1` outside Docker). The worker is safe to restart: it keeps no
+in-memory state.
+
+Event-driven alerts (circuit breaker open, audit integrity failure, flagged tool output) fire immediately
+through the ingest pipeline and do not need the worker.
 
 ```bash
-ENABLE_ALERT_WORKER=1 uvicorn app.main:app ...
+docker compose logs -f worker
 ```
-
-For production, run exactly one process with `ENABLE_ALERT_WORKER=1` to avoid duplicate evaluations. The worker starts per uvicorn worker process, so don't combine it with `--workers N` or multiple replicas — run a dedicated single-process deployment for it instead. The worker is safe to restart — it uses database state, not in-memory state.
-
-Event-driven alerts (circuit breaker open, audit integrity failure) fire immediately via the ingest pipeline and do not require the worker.
 
 ---
 
@@ -211,6 +260,18 @@ curl http://localhost:8000/healthz
 ```
 
 Use this as your load balancer health check endpoint. It does not touch the database.
+
+---
+
+## Backups
+
+```bash
+docker compose exec db pg_dump -U agentkit agentkit > agentkit-$(date +%F).sql          # back up
+cat agentkit-2026-09-16.sql | docker compose exec -T db psql -U agentkit -d agentkit    # restore
+```
+
+The database holds the audit chains your evidence bundles are built from, so back it up on the same schedule
+as anything else you would have to produce for an auditor.
 
 ---
 

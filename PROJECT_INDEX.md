@@ -1,6 +1,6 @@
 # Project Index: agent-kit
 
-Generated: 2026-09-15 (updated for tool output scanning) · SDK `agent-kit` **v0.3.0** (unreleased changes in CHANGELOG) · server `agentkit-cloud-server` v0.1.0 · Rising Sun License v1.0 · Python ≥3.11
+Generated: 2026-09-15 (updated for cloud deployment) · SDK `agent-kit` **v0.3.0** (unreleased changes in CHANGELOG) · server `agentkit-cloud-server` v0.1.0 · Rising Sun License v1.0 · Python ≥3.11
 
 ## 📁 Project Structure
 
@@ -33,18 +33,21 @@ agent-kit/
 │   ├── app/
 │   │   ├── main.py             # app + lifespan; alert worker when ENABLE_ALERT_WORKER=1
 │   │   ├── auth.py · database.py · models.py · schemas.py
+│   │   ├── cli.py              # `agentkit-server`: create-org, list-orgs, create-key, list-keys, revoke-key
+│   │   ├── worker.py           # `python -m app.worker`: alerts + budgets + retention, 60s cadence
 │   │   ├── audit_chain.py      # server-side chain verify + append_event
 │   │   ├── budgets.py          # periods, spend (incl. in-flight), trip/close
 │   │   ├── routers/            # ingest, otlp, metrics, audit, alerts, support, budgets, compliance (9 routers, 39 routes)
 │   │   ├── otlp/               # decode.py → normalize.py → assembler.py; pricing.py
 │   │   ├── alerting/           # evaluator.py, dispatch.py
 │   │   └── compliance/         # signing.py (Ed25519 + rotation), bundle.py, retention.py (holds, purge, receipts)
+│   ├── Dockerfile · docker-entrypoint.sh · docker-compose.yml · .env.example   # api + worker + postgres
 │   ├── migrations/versions/    # 001–007
-│   └── tests/                  # 11 test files + conftest + otlp_helpers
+│   └── tests/                  # 13 test files + conftest + otlp_helpers
 ├── tests/                      # 25 SDK test files + conftest + injection_fixtures.py (the only home of injection payloads) + fixtures/mcp_fixture_server.py
 ├── examples/                   # 15 runnable scripts + README
-├── docs/                       # 4 cloud docs + superpowers/plans/ (12 implementation plans)
-├── specs/                      # 00–17
+├── docs/                       # 4 cloud docs + superpowers/plans/ (13 implementation plans)
+├── specs/                      # 00–18
 └── .github/workflows/ci.yml
 ```
 
@@ -54,9 +57,11 @@ agent-kit/
 |------|-------|
 | SDK public API | `agent_kit/__init__.py` |
 | CLI | `agent-kit` → `agent_kit.cli:main` (`verify` subcommand) |
-| Cloud server | `server/app/main.py` — `uvicorn app.main:app` |
+| Cloud server | `server/app/main.py` — `uvicorn app.main:app`, or `docker compose up -d --build` in `server/` |
+| Cloud admin CLI | `agentkit-server` → `app.cli:main` (orgs and API keys) |
+| Cloud worker | `python -m app.worker` (alerts, budgets, retention) |
 | SDK tests | `pytest` — 365 tests |
-| Server tests | `cd server && pytest` — 166 tests |
+| Server tests | `cd server && pytest` — 174 tests |
 
 ## 📦 SDK Surface
 
@@ -143,15 +148,15 @@ Cloud wire `EventType`: `run_start`, `turn_complete`, `run_complete`, `run_error
 ## 📚 Docs & Specs
 
 - `README.md` — quick start + a section per feature (hooks, MCP, typed, context, durable); `CHANGELOG.md` — `[Unreleased]` holds everything since 0.2.0; `CONTRIBUTING.md`
-- `docs/` — `cloud-quickstart.md`, `self-hosting.md`, `api-reference.md` (covers traces, budgets, compliance), `troubleshooting.md`
+- `docs/` — `cloud-quickstart.md`, `self-hosting.md` (Docker stack, `agentkit-server`, TLS, backups), `api-reference.md` (covers traces, budgets, compliance), `troubleshooting.md`
 - `docs/superpowers/plans/` — implementation plans for tier-1 fundamentals, harness adapters, OTLP, cost breaker, compliance, hooks, MCP, typed results, context mgmt, durable runs, agents as tools, tool output scanning
-- `specs/` — 00 platform · 01 audit trail · 02 fleet dashboard · 03 alerting · 04 SLA support · **05 dashboard UI (not built)** · 06 harness roadmap (tier status) · 07 harness adapters · 08 OTLP ingest · 09 cost breaker · 10 compliance exports · 11 hooks · 12 MCP client · 13 typed results · 14 context mgmt · 15 durable runs · 16 agents as tools · 17 tool output scanning
+- `specs/` — 00 platform · 01 audit trail · 02 fleet dashboard · 03 alerting · 04 SLA support · **05 dashboard UI (not built)** · 06 harness roadmap (tier status) · 07 harness adapters · 08 OTLP ingest · 09 cost breaker · 10 compliance exports · 11 hooks · 12 MCP client · 13 typed results · 14 context mgmt · 15 durable runs · 16 agents as tools · 17 tool output scanning · 18 cloud deployment
 
 ## 🧪 Tests
 
 **SDK (`tests/`, 365)** — agent, tools, retry, circuit_breaker, audit, pipeline, dag, sqlite_memory, memory_window, cloud_reporter, provider_requests (fake clients record kwargs), context_budget, budgets, compliance, output, typed_results, mcp (real fixture server, stdio + HTTP), hooks, run_store, durable_runs, agent_tool (delegation, bubbling approvals, crash recovery), scanning (findings, policy tiers, pattern rules over `injection_fixtures`, Nullcone via MockTransport, repo payload hygiene), integrations_{recorder,claude,openai_agents}. Loop tests use `MockProvider` from `conftest.py`.
 
-**Server (`server/tests/`, 166)** — ingest, metrics, alerts, support, audit_chain_append, otlp_{decode,normalize,ingest}, budgets, compliance, tool_output_flagged. Real in-process aiosqlite; never mock the DB.
+**Server (`server/tests/`, 174)** — ingest, metrics, alerts, support, audit_chain_append, otlp_{decode,normalize,ingest}, budgets, compliance, tool_output_flagged, cli, worker. Real in-process aiosqlite; never mock the DB.
 
 Both: `asyncio_mode = "auto"`.
 
