@@ -32,6 +32,9 @@ dev = [
     "mypy>=1.9",
 ]
 
+[project.scripts]
+agentkit-server = "app.cli:main"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
