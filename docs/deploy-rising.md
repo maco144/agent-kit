@@ -9,7 +9,7 @@ The production-ish deployment that AIOS agents report to. Generic instructions l
 | Path | `/opt/agentkit` (git clone of `maco144/agent-kit`) |
 | Compose project | `agentkit` — services `db`, `api`, `worker` |
 | API | `http://127.0.0.1:8020` (localhost only; Caddy fronts it once DNS exists) |
-| Public hostname | `agentkit.eudaimonia.win` — **needs an A record to 45.77.104.159** |
+| Public hostname | `https://agentkit.eudaimonia.win` (live since 2026-09-16; Caddy block in `/etc/caddy/Caddyfile`) |
 | Secrets | `/opt/agentkit/server/.env` (mode 600): Postgres password, `AGENTKIT_SIGNING_KEY` |
 | AIOS key | `/opt/agentkit/server/aios-key.txt` (mode 600) — issued once, not recoverable |
 
@@ -42,19 +42,21 @@ export AGENTKIT_BASE_URL=http://127.0.0.1:8020
 export AGENTKIT_API_KEY=$(cat /opt/agentkit/server/aios-key.txt)
 ```
 
-## TLS (pending DNS)
+## TLS
 
-Once `agentkit.eudaimonia.win` resolves to 45.77.104.159:
+Done on 2026-09-16 — A record to 45.77.104.159, then:
 
 ```bash
 sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak-$(date +%Y%m%d-%H%M%S)
 printf '\nagentkit.eudaimonia.win {\n\treverse_proxy 127.0.0.1:8020\n}\n' | sudo tee -a /etc/caddy/Caddyfile
 sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 sudo systemctl reload caddy
-curl -fsS https://agentkit.eudaimonia.win/healthz
+curl -fsS https://agentkit.eudaimonia.win/healthz     # {"status":"ok"}
 ```
 
-If `caddy validate` fails, restore the backup and reload before investigating.
+If `caddy validate` fails, restore the backup and reload before investigating. Caddy issues and renews the
+certificate automatically; the signing keys are public at
+`https://agentkit.eudaimonia.win/.well-known/agentkit-signing-keys`.
 
 ## Operating
 
