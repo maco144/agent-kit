@@ -70,6 +70,18 @@ app.include_router(compliance.wellknown_router)
 app.include_router(compliance.router)
 
 
+@app.get("/", tags=["meta"])
+async def root() -> dict[str, str]:
+    """Public service pointer — the API itself lives under /v1 and needs an API key."""
+    return {
+        "service": "agent-kit Cloud",
+        "version": app.version,
+        "docs": "/docs",
+        "health": "/healthz",
+        "source": "https://github.com/maco144/agent-kit",
+    }
+
+
 @app.get("/healthz", tags=["meta"])
 async def health() -> dict[str, str]:
     return {"status": "ok"}
