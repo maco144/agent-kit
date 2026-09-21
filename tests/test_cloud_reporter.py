@@ -353,3 +353,70 @@ async def test_run_start_carries_parent_run_id_only_when_set():
     child, top = reporter._queue.get_nowait(), reporter._queue.get_nowait()
     assert child.payload["parent_run_id"] == "parent"
     assert "parent_run_id" not in top.payload
+
+
+# ---------------------------------------------------------------------------
+# Lost events are loud, rejected batches are not retried
+# ---------------------------------------------------------------------------
+
+
+def _run_start() -> CloudEvent:
+    return CloudEvent(event_type=EventType.RUN_START, run_id="r", agent_name="a", project="p")
+
+
+@pytest.fixture
+def no_backoff(monkeypatch):
+    monkeypatch.setattr("agent_kit.cloud.reporter._BACKOFF_S", (0.0, 0.0))
+
+
+async def _shipping(status_codes: list[int], events: int = 1) -> tuple[CloudReporter, list[int]]:
+    import httpx
+
+    seen: list[int] = []
+    codes = iter(status_codes)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(len(gzip.decompress(request.content).splitlines()))
+        return httpx.Response(next(codes), text="nope")
+
+    reporter = make_reporter(base_url="https://test.agentkit.io", max_queue_size=10_000)
+    reporter._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    for _ in range(events):
+        reporter._queue.put_nowait(_run_start())
+    return reporter, seen
+
+
+async def test_rejected_batch_is_logged_and_not_retried(no_backoff, caplog):
+    reporter, seen = await _shipping([422])
+    with caplog.at_level("WARNING", logger="agent_kit.cloud"):
+        await reporter.flush()
+    assert seen == [1]
+    assert "422" in caplog.text and "1 event" in caplog.text
+
+
+async def test_server_errors_are_retried(no_backoff):
+    reporter, seen = await _shipping([503, 429, 202])
+    await reporter.flush()
+    assert len(seen) == 3
+
+
+async def test_batch_lost_after_retries_is_logged(no_backoff, caplog):
+    reporter, _ = await _shipping([500, 500, 500])
+    with caplog.at_level("WARNING", logger="agent_kit.cloud"):
+        await reporter.flush()
+    assert "dropped 1 event" in caplog.text
+
+
+async def test_full_queue_counts_drops_and_warns_once(caplog):
+    reporter = make_reporter(max_queue_size=2)
+    with caplog.at_level("WARNING", logger="agent_kit.cloud"):
+        for _ in range(5):
+            reporter._put(_run_start())
+    assert reporter.dropped_events == 3
+    assert caplog.text.count("queue full") == 1
+
+
+async def test_flush_drains_the_whole_queue():
+    reporter, seen = await _shipping([202, 202, 202], events=450)
+    await reporter.flush()
+    assert seen == [200, 200, 50] and reporter._queue.empty()

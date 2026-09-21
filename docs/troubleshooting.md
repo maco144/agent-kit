@@ -234,13 +234,12 @@ result = await dag.run("The future of AI agents")
    config = AgentConfig(cloud=reporter)  # easy to forget
    ```
 
-3. **Check for queue overflow.** Dropped events and failed shipments are logged at `DEBUG` on the `agent_kit.cloud` logger. Turn it on before creating the reporter:
-   ```python
-   import logging
-   logging.basicConfig()
-   logging.getLogger("agent_kit.cloud").setLevel(logging.DEBUG)
-   ```
-   Increase `max_queue_size` or decrease `flush_interval_s` if the queue is filling up.
+3. **Check for lost events.** `reporter.dropped_events` counts every event lost, and each loss is logged at `WARNING` on the `agent_kit.cloud` logger:
+   - `event queue full (max_queue_size=1000)` — events arrive faster than they ship. Increase `max_queue_size`. Logged on the first drop, then at most once a minute.
+   - `rejected N event(s), not retrying — HTTP 401: ...` — the server refused the batch. A 401 means a wrong or revoked API key; other 4xx are not retried because the same batch would fail again.
+   - `dropped N event(s) after 3 attempts` — the server was unreachable, or returned 5xx / 408 / 429 on every attempt.
+
+   Each flush ships the whole queue in batches of 200.
 
 4. **Manually flush in tests or short-lived scripts:**
    ```python

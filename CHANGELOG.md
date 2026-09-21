@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 
 ## [Unreleased]
 
+### Fixed
+- **CloudReporter no longer loses events silently.** Dropped events were logged at `DEBUG`. A full queue, a batch the server rejects, and a batch that fails every attempt now log a `WARNING` (a full queue at most once a minute), and `reporter.dropped_events` counts them. Batches rejected with a 4xx other than 408 / 429 are no longer retried, since the same batch would be rejected again. Each flush now ships the whole queue instead of at most 200 events per interval (40 events a second), and the `atexit` flush drains every batch rather than the first.
+
 ## [0.5.0] — 2026-09-21
 
 **Upgrading:** two failures that used to pass silently now raise. A response cut off at the output limit raises `ResponseTruncatedError` — adaptive thinking on Claude Opus 5 can use up the default `max_tokens_per_turn=4096`, so raise it if you see this. With `max_run_cost_usd` or fleet budgets set, a model agent-kit has no price for raises `UnpricedModelError` — the built-in OpenAI table ends at `gpt-4o` / `o1`, so price newer models with `agent_kit.providers.set_price(...)`.

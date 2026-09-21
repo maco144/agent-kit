@@ -7,6 +7,7 @@ import gzip
 import hashlib
 import logging
 import os
+import time
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -24,6 +25,8 @@ logger = logging.getLogger("agent_kit.cloud")
 
 _INGEST_PATH = "/v1/events"
 _MAX_BATCH = 200
+_BACKOFF_S = (1.0, 2.0)  # waits between the three attempts to ship a batch
+_DROP_WARNING_INTERVAL_S = 60.0
 
 
 class CloudReporter:
@@ -84,9 +87,16 @@ class CloudReporter:
         self._http: httpx.AsyncClient | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._budget_guard: BudgetGuard | None = None
+        self._dropped = 0
+        self._last_drop_warning = 0.0
 
         import atexit
         atexit.register(self._flush_sync)
+
+    @property
+    def dropped_events(self) -> int:
+        """Events lost so far: queue full, rejected by the server, or unshippable after retries."""
+        return self._dropped
 
     @property
     def project(self) -> str:
@@ -282,9 +292,16 @@ class CloudReporter:
         try:
             self._queue.put_nowait(event)
         except asyncio.QueueFull:
-            logger.debug(
-                "agent-kit Cloud: event queue full, dropping %s", event.event_type
-            )
+            self._dropped += 1
+            now = time.monotonic()
+            if self._dropped == 1 or now - self._last_drop_warning >= _DROP_WARNING_INTERVAL_S:
+                self._last_drop_warning = now
+                logger.warning(
+                    "agent-kit Cloud: event queue full (max_queue_size=%d), dropping %s; %d events dropped so far",
+                    self._max_queue_size,
+                    event.event_type.value,
+                    self._dropped,
+                )
 
     def _ensure_flush_task(self) -> None:
         if self._flush_task is not None and not self._flush_task.done():
@@ -308,59 +325,68 @@ class CloudReporter:
         except asyncio.CancelledError:
             await self._flush()
 
-    async def _flush(self) -> None:
+    def _take_batch(self) -> list[CloudEvent]:
         events: list[CloudEvent] = []
         try:
             while len(events) < _MAX_BATCH:
                 events.append(self._queue.get_nowait())
         except asyncio.QueueEmpty:
             pass
-        if not events:
-            return
-        await self._ship(events)
+        return events
+
+    async def _flush(self) -> None:
+        """Ship everything queued, one batch after another."""
+        while events := self._take_batch():
+            await self._ship(events)
 
     async def _ship(self, events: list[CloudEvent]) -> None:
         if self._http is None:
             return
         body = _encode_batch(events)
-        for attempt in range(3):
+        error = ""
+        for attempt in range(len(_BACKOFF_S) + 1):
             try:
                 resp = await self._http.post(
                     f"{self._base_url}{_INGEST_PATH}",
                     content=body,
                     headers=_ingest_headers(self._api_key),
                 )
-                resp.raise_for_status()
-                return
             except Exception as exc:
-                if attempt == 2:
-                    logger.debug(
-                        "agent-kit Cloud: failed to ship %d events after 3 attempts: %s",
-                        len(events),
-                        exc,
-                    )
-                else:
-                    await asyncio.sleep(2.0 ** attempt)
+                error = f"{type(exc).__name__}: {exc}"
+            else:
+                if resp.status_code < 400:
+                    return
+                error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                if not _retryable(resp.status_code):  # the same batch would be rejected again
+                    self._lose(events, f"agent-kit Cloud rejected %d event(s), not retrying — {error}")
+                    return
+            if attempt < len(_BACKOFF_S):
+                await asyncio.sleep(_BACKOFF_S[attempt])
+        self._lose(events, f"agent-kit Cloud: dropped %d event(s) after {len(_BACKOFF_S) + 1} attempts — {error}")
+
+    def _lose(self, events: list[CloudEvent], message: str) -> None:
+        self._dropped += len(events)
+        logger.warning(message, len(events))
 
     def _flush_sync(self) -> None:
-        """atexit handler — drains remaining queue with a synchronous HTTP client."""
-        events: list[CloudEvent] = []
-        try:
-            while len(events) < _MAX_BATCH:
-                events.append(self._queue.get_nowait())
-        except Exception:
-            pass
-        if not events:
+        """atexit handler — drains the remaining queue with a synchronous HTTP client, one attempt per batch."""
+        batches: list[list[CloudEvent]] = []
+        while events := self._take_batch():
+            batches.append(events)
+        if not batches:
             return
         try:
             with httpx.Client(timeout=10.0) as client:
-                client.post(
-                    f"{self._base_url}{_INGEST_PATH}",
-                    content=_encode_batch(events),
-                    headers=_ingest_headers(self._api_key),
-                )
+                for events in batches:
+                    resp = client.post(
+                        f"{self._base_url}{_INGEST_PATH}",
+                        content=_encode_batch(events),
+                        headers=_ingest_headers(self._api_key),
+                    )
+                    if resp.status_code >= 400:
+                        self._lose(events, f"agent-kit Cloud: atexit flush lost %d event(s) — HTTP {resp.status_code}")
         except Exception as exc:
-            logger.debug("agent-kit Cloud: atexit flush failed: %s", exc)
+            logger.warning("agent-kit Cloud: atexit flush failed: %s", exc)
 
     def __repr__(self) -> str:
         return (
@@ -373,6 +399,11 @@ class CloudReporter:
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
+def _retryable(status_code: int) -> bool:
+    """Server errors, timeouts, and rate limits may pass on retry; other 4xx won't."""
+    return status_code >= 500 or status_code in (408, 429)
+
 
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()

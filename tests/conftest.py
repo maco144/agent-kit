@@ -70,6 +70,12 @@ def _agentkit_base_url(monkeypatch):
     monkeypatch.setenv("AGENTKIT_BASE_URL", "http://agentkit.test")
 
 
+@pytest.fixture(autouse=True)
+def _no_atexit_flush(monkeypatch):
+    """Reporters built in tests must not try to ship leftover events to the placeholder URL at exit."""
+    monkeypatch.setattr(CloudReporter, "_flush_sync", lambda self: None)
+
+
 @pytest.fixture
 def mock_provider():
     return MockProvider()
