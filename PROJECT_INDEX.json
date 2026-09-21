@@ -1,6 +1,6 @@
 {
   "project": "agent-kit",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "server_version": "0.1.0",
   "generated": "2026-09-15",
   "description": "Production-ready framework for building AI agents. Type-safe. Observable. Circuit-broken.",
