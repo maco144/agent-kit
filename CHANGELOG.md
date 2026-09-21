@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-09-21
+
+**Upgrading:** two failures that used to pass silently now raise. A response cut off at the output limit raises `ResponseTruncatedError` — adaptive thinking on Claude Opus 5 can use up the default `max_tokens_per_turn=4096`, so raise it if you see this. With `max_run_cost_usd` or fleet budgets set, a model agent-kit has no price for raises `UnpricedModelError` — the built-in OpenAI table ends at `gpt-4o` / `o1`, so price newer models with `agent_kit.providers.set_price(...)`.
+
 ### Fixed
 - **A run that ends mid tool call no longer poisons the next request.** A cancelled run (`asyncio.wait_for`, task cancel) or a crash over persistent memory left the model's tool call without a result, and every later run on the same Agent was rejected by the provider. Unanswered calls now get their result — or `Tool call interrupted: the run ended before it returned` — when the run exits and again before the next run starts. Cancelled runs are marked `failed` in the run store and reported as `run_error` instead of staying `running`.
 - **Cut-off responses are no longer treated as complete.** A response stopped at the output limit (`stop_reason: max_tokens`, `finish_reason: length`) raises `ResponseTruncatedError` instead of running a tool on partial arguments or returning half an answer as a completed run. A stream that closes before the provider finishes the message raises `ProviderError` (retried if no text had been yielded) instead of yielding a partial turn with empty tool arguments and $0 cost.
