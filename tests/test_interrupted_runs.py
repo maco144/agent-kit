@@ -46,10 +46,24 @@ def final(text: str = "done") -> Turn:
     return Turn(message_out=Message(role="assistant", content=text), cost=CostSummary(total_tokens=5, cost_usd=0.01))
 
 
+hanging: list[asyncio.Event] = []  # one per run, created on the test's own event loop
+
+
 @tool(description="hangs until cancelled")
 async def hang() -> dict[str, Any]:
+    hanging[-1].set()
     await asyncio.sleep(3600)
     return {}
+
+
+async def cancel_once_hanging(run: Any) -> None:
+    """Start a run, cancel it once the hang tool is executing (not on a wall clock), and await the cancellation."""
+    hanging.append(asyncio.Event())
+    task = asyncio.ensure_future(run)
+    await asyncio.wait_for(hanging[-1].wait(), timeout=10)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 @tool(description="returns at once")
@@ -78,8 +92,7 @@ def assert_every_tool_call_answered(messages: list[Message]) -> None:
 async def test_run_after_a_cancelled_tool_call_answers_every_call():
     provider = Scripted(calls("quick", "hang"), final("second"))
     agent = Agent(provider, tools=[quick, hang])
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(agent.run("first"), timeout=0.2)
+    await cancel_once_hanging(agent.run("first"))
 
     result = await agent.run("second prompt")
 
@@ -114,8 +127,7 @@ async def test_cancelled_run_is_marked_failed_and_reported(tmp_path):
         run_store=SQLiteRunStore(tmp_path / "runs.db"), cloud=reporter,
         retry_policy=RetryPolicyConfig(max_attempts=1)))
 
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(agent.run("go", run_id="r1"), timeout=0.2)
+    await cancel_once_hanging(agent.run("go", run_id="r1"))
 
     stored = await SQLiteRunStore(tmp_path / "runs.db").load("r1")
     assert stored is not None and stored.status == "failed"
@@ -155,15 +167,15 @@ class Stalling:
 
 async def test_a_stalled_model_call_is_retried():
     provider = Stalling(stalls=1)
-    agent = Agent(provider, config=AgentConfig(llm_timeout_s=0.1))
+    agent = Agent(provider, config=AgentConfig(llm_timeout_s=1.0))
     result = await asyncio.wait_for(agent.run("go"), timeout=5)
     assert (result.output, provider.calls) == ("answered", 2)
 
 
 async def test_a_stream_that_stalls_after_text_fails_instead_of_hanging():
-    agent = Agent(Stalling(), config=AgentConfig(llm_timeout_s=0.1))
+    agent = Agent(Stalling(), config=AgentConfig(llm_timeout_s=1.0))
     chunks: list[str] = []
-    with pytest.raises(ProviderError, match="within 0.1s"):
+    with pytest.raises(ProviderError, match="within 1s"):
         async for chunk in agent.stream("go"):
             chunks.append(chunk)
     assert chunks == ["partial "]
