@@ -27,6 +27,17 @@ class ResponseTruncatedError(AgentKitError):
         )
 
 
+class UnpricedModelError(AgentKitError):
+    """A cost cap is set but the model has no price, so its spend can't be counted against the cap."""
+
+    def __init__(self, model: str) -> None:
+        self.model = model
+        super().__init__(
+            f"no price for model {model!r}, so max_run_cost_usd / fleet budgets can't be enforced; register one "
+            f"with agent_kit.providers.set_price({model!r}, input_usd_per_mtok, output_usd_per_mtok)"
+        )
+
+
 class ToolNotFoundError(AgentKitError):
     """Agent tried to call a tool that isn't registered."""
 

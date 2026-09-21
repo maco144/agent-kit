@@ -30,8 +30,8 @@ except ImportError as e:
         "Install it with: pip install agent-kit-ai[openai-agents]"
     ) from e
 
-from agent_kit.exceptions import BudgetExceededError
-from agent_kit.integrations.recorder import RunRecorder, price_call
+from agent_kit.exceptions import BudgetExceededError, UnpricedModelError
+from agent_kit.integrations.recorder import RunRecorder, is_priced, price_call
 
 if TYPE_CHECKING:
     from agents import Agent, ModelResponse, RunContextWrapper, TResponseInputItem
@@ -204,13 +204,18 @@ class AgentKitRunHooks(RunHooks[Any]):
         system_prompt: str | None,
         input_items: list[TResponseInputItem],
     ) -> None:
+        if self._guard is not None:
+            await self._guard.check(self._name(agent), self._reporter.project)
+        if self._max_run_cost_usd is None and self._guard is None:
+            return
+        # Spend on an unpriced model would count as $0.00 and never reach a cap
+        if not is_priced(_model_name(agent)):
+            raise UnpricedModelError(_model_name(agent) or "<unset: pass the Agent a model name>")
         if self._max_run_cost_usd is not None:
             usage = context.usage
             spent = price_call(_model_name(agent), int(usage.input_tokens or 0), int(usage.output_tokens or 0))
             if spent >= self._max_run_cost_usd:
                 raise BudgetExceededError(scope="run", limit_usd=self._max_run_cost_usd, spent_usd=spent)
-        if self._guard is not None:
-            await self._guard.check(self._name(agent), self._reporter.project)
 
     async def on_llm_end(
         self, context: RunContextWrapper[Any], agent: Agent[Any], response: ModelResponse

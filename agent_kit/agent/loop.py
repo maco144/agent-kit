@@ -20,6 +20,7 @@ from agent_kit.exceptions import (
     OutputValidationError,
     RunConflictError,
     RunStoppedByHookError,
+    UnpricedModelError,
 )
 from agent_kit.hooks import (
     ApprovalRequest,
@@ -383,6 +384,11 @@ class AgentLoop:
                             usd=turn.cost.cost_usd,
                         )
                         self._run_cost_usd += turn.cost.cost_usd
+                        if not turn.cost.priced and (
+                            self._max_run_cost_usd is not None or self._budget_guard is not None
+                        ):
+                            # $0.00 here means "unknown": counting it would let the cap pass forever
+                            raise UnpricedModelError(turn.cost.model)
                         if self._budget_guard is not None and self._reporter is not None:
                             self._budget_guard.record_spend(
                                 self._reporter.agent_name, self._reporter.project, turn.cost.cost_usd

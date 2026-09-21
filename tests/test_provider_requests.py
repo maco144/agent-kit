@@ -15,8 +15,9 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from agent_kit import Agent, tool
-from agent_kit.exceptions import ProviderError, ResponseTruncatedError
+from agent_kit import Agent, AgentConfig, tool
+from agent_kit.exceptions import ProviderError, ResponseTruncatedError, UnpricedModelError
+from agent_kit.providers.pricing import clear_prices, set_price
 from agent_kit.output import OutputSpec
 from agent_kit.providers import anthropic as anthropic_provider
 from agent_kit.providers.anthropic import AnthropicProvider
@@ -52,11 +53,13 @@ requires_openai = pytest.mark.skipif(
 )
 
 
-def anthropic_agent(responses: list[NS], tools: list[Any]) -> tuple[Agent, FakeAnthropic]:
-    provider = AnthropicProvider(api_key="test")
+def anthropic_agent(
+    responses: list[NS], tools: list[Any], model: str | None = None, **config: Any
+) -> tuple[Agent, FakeAnthropic]:
+    provider = AnthropicProvider(api_key="test", **({"default_model": model} if model else {}))
     fake = FakeAnthropic(responses)
     provider._client = fake  # type: ignore[assignment]
-    return Agent(provider, tools=tools), fake
+    return Agent(provider, tools=tools, config=AgentConfig(**config)), fake
 
 
 @tool(description="Weather for a city")
@@ -779,3 +782,49 @@ async def test_openai_stream_cut_at_length_fails():
     )
     with pytest.raises(ResponseTruncatedError):
         [c async for c in agent.stream("question")]
+
+
+# ---------------------------------------------------------------------------
+# Unpriced models under a cost cap
+# ---------------------------------------------------------------------------
+
+
+async def test_unpriced_model_under_a_run_cost_cap_fails_closed():
+    agent, _ = anthropic_agent(
+        [anthropic_response([text_block("hi")])], tools=[], model="claude-future-9", max_run_cost_usd=1.0
+    )
+    with pytest.raises(UnpricedModelError, match="claude-future-9"):
+        await agent.run("hello")
+
+
+async def test_unpriced_model_without_a_cap_still_runs_at_zero_cost():
+    agent, _ = anthropic_agent([anthropic_response([text_block("hi")])], tools=[], model="claude-future-9")
+    result = await agent.run("hello")
+    assert (result.output, result.total_cost_usd) == ("hi", 0.0)
+
+
+async def test_set_price_prices_a_new_model():
+    set_price("claude-future-9", 1.0, 2.0)
+    try:
+        agent, _ = anthropic_agent(
+            [anthropic_response([text_block("hi")], input_tokens=1_000_000)],
+            tools=[], model="claude-future-9", max_run_cost_usd=5.0,
+        )
+        result = await agent.run("hello")
+    finally:
+        clear_prices()
+    assert result.total_cost_usd == pytest.approx(1.0 + 5 * 2.0 / 1_000_000)
+
+
+@requires_openai
+async def test_ollama_models_are_free_not_unpriced(caplog):
+    from agent_kit.providers.ollama import OllamaProvider
+
+    provider = OllamaProvider(default_model="llama-unlisted")
+    fake = FakeOpenAI([openai_response("hi")])
+    provider._client = fake  # type: ignore[assignment]
+    agent = Agent(provider, config=AgentConfig(max_run_cost_usd=1.0))
+    with caplog.at_level(logging.WARNING, logger="agent_kit.providers"):
+        result = await agent.run("hello")
+    assert (result.output, result.total_cost_usd) == ("hi", 0.0)
+    assert "llama-unlisted" not in caplog.text

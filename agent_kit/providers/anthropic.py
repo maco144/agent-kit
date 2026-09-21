@@ -264,6 +264,7 @@ def _turn_from_response(
         total_tokens=input_tokens + output_tokens + cache_read + cache_write,
         cost_usd=_estimate_cost(model, input_tokens, output_tokens, cache_read, cache_write),
         model=model,
+        priced=lookup_rates(_COST_TABLE, model) is not None,
     )
     context_events: list[dict[str, Any]] = [
         {

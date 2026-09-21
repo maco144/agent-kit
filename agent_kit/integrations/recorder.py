@@ -57,6 +57,22 @@ def price_call(
         return 0.0
 
 
+def is_priced(model: str | None) -> bool:
+    """Whether price_call() knows this model — its 0.0 then means free, not unknown."""
+    if not model:
+        return False
+    try:
+        if model.startswith("claude"):
+            from agent_kit.providers.anthropic import _COST_TABLE
+        else:
+            from agent_kit.providers.openai import _COST_TABLE
+    except ImportError:
+        return False
+    from agent_kit.providers.pricing import lookup_rates
+
+    return lookup_rates(_COST_TABLE, model) is not None
+
+
 class RunRecorder:
     """
     Harness-neutral run lifecycle for adapters.

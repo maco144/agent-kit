@@ -84,6 +84,7 @@ class CostSummary(BaseModel):
     total_tokens: int = 0
     cost_usd: float = 0.0
     model: str = ""
+    priced: bool = True  # False when the model has no price: cost_usd is 0.0 because it is unknown
 
 
 class Turn(BaseModel):

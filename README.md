@@ -785,6 +785,10 @@ Budgets (`$200/day for support-bot`) live in agent-kit Cloud at `/v1/budgets`; w
 model call raises `BudgetExceededError` and a `budget_exceeded` alert fires. See
 [`docs/cloud-quickstart.md`](docs/cloud-quickstart.md#stop-runaway-spend).
 
+Caps fail closed: a model agent-kit has no price for raises `UnpricedModelError` rather than counting as
+$0.00. Price it once at startup — `agent_kit.providers.set_price("gpt-5", 1.25, 10.00)` (USD per million
+input / output tokens, longest prefix wins). Ollama models are free and need no price.
+
 ### Already on another harness?
 
 Keep it. Adapters report Claude Agent SDK and OpenAI Agents SDK runs — turns, tool calls,

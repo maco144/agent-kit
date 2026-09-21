@@ -156,6 +156,11 @@ class OpenAIProvider:
     def name(self) -> str:
         return "openai"
 
+    def _price(self, model: str, input_tokens: int, output_tokens: int) -> tuple[float, bool]:
+        """(cost_usd, priced) for one call."""
+        priced = lookup_rates(_COST_TABLE, model) is not None
+        return _estimate_cost(model, input_tokens, output_tokens), priced
+
     async def complete(
         self,
         messages: list[Message],
@@ -212,13 +217,14 @@ class OpenAIProvider:
         usage = response.usage
         input_tokens = usage.prompt_tokens if usage else 0
         output_tokens = usage.completion_tokens if usage else 0
-        cost_usd = _estimate_cost(resolved_model, input_tokens, output_tokens)
+        cost_usd, priced = self._price(resolved_model, input_tokens, output_tokens)
         cost = CostSummary(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
             cost_usd=cost_usd,
             model=resolved_model,
+            priced=priced,
         )
 
         text = msg.content or getattr(msg, "refusal", None) or ""
@@ -309,6 +315,7 @@ class OpenAIProvider:
             )
             for _, slot in sorted(pending.items())
         ]
+        cost_usd, priced = self._price(resolved_model, input_tokens, output_tokens)
         yield Turn(
             messages_in=messages,
             message_out=Message(role="assistant", content="".join(text_parts), tool_calls=tool_calls),
@@ -317,8 +324,9 @@ class OpenAIProvider:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 total_tokens=input_tokens + output_tokens,
-                cost_usd=_estimate_cost(resolved_model, input_tokens, output_tokens),
+                cost_usd=cost_usd,
                 model=resolved_model,
+                priced=priced,
             ),
             duration_ms=int((time.monotonic() - t0) * 1000),
         )

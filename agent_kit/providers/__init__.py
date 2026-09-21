@@ -2,11 +2,14 @@
 
 from agent_kit.providers.anthropic import AnthropicProvider
 from agent_kit.providers.base import BaseProvider, ProviderConfig
+from agent_kit.providers.pricing import clear_prices, set_price
 
 __all__ = [
     "AnthropicProvider",
     "BaseProvider",
     "ProviderConfig",
+    "clear_prices",
+    "set_price",
 ]
 
 # Optional providers — imported lazily to avoid hard dependency errors

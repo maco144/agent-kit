@@ -9,7 +9,7 @@ import pytest
 
 tracing = pytest.importorskip("agents.tracing")
 
-from agent_kit.exceptions import BudgetExceededError  # noqa: E402
+from agent_kit.exceptions import BudgetExceededError, UnpricedModelError  # noqa: E402
 from agent_kit.integrations.openai_agents import (  # noqa: E402
     AgentKitRunHooks,
     AgentKitTraceProcessor,
@@ -169,6 +169,17 @@ async def test_run_hooks_per_run_cap_from_context_usage(cloud_capture):
     assert (info.value.scope, info.value.spent_usd) == ("run", pytest.approx(0.015))
 
     await AgentKitRunHooks(cloud_capture.reporter, max_run_cost_usd=1.0, enforce_budgets=False).on_llm_start(context, agent, None, [])
+
+
+async def test_run_hooks_refuse_a_cap_they_cannot_price(cloud_capture):
+    context = NS(usage=NS(input_tokens=0, output_tokens=0))
+    capped = AgentKitRunHooks(cloud_capture.reporter, max_run_cost_usd=1.0, enforce_budgets=False)
+    with pytest.raises(UnpricedModelError, match="gpt-future"):
+        await capped.on_llm_start(context, NS(name="a", model="gpt-future"), None, [])
+
+    cloud_capture.reporter._budget_guard = GuardStub(tripped=False)
+    with pytest.raises(UnpricedModelError):
+        await AgentKitRunHooks(cloud_capture.reporter).on_llm_start(context, NS(name="a", model="gpt-future"), None, [])
 
 
 async def test_run_hooks_record_spend_on_llm_end(cloud_capture):
