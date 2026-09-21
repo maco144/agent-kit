@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -26,6 +27,7 @@ from app.models import (
 from app.schemas import IngestResponse
 
 router = APIRouter(prefix="/v1/events", tags=["ingest"])
+logger = logging.getLogger("agentkit.cloud.ingest")
 
 
 @router.post("", response_model=IngestResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -69,10 +71,12 @@ async def ingest_events(
     accepted = 0
     for raw in raw_events:
         try:
-            await _process_event(raw, org.id, db)
+            # A savepoint per event: a failed flush rolls back only that event, not the whole batch
+            async with db.begin_nested():
+                await _process_event(raw, org.id, db)
             accepted += 1
         except Exception:
-            # Skip malformed individual events; don't fail the whole batch.
+            logger.warning("Skipped malformed %s event %s", raw.get("event_type"), raw.get("event_id"), exc_info=True)
             continue
 
     await db.commit()

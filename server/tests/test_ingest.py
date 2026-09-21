@@ -320,3 +320,20 @@ async def test_list_events_filter_by_event_type(client):
     assert resp.status_code == 200
     data = resp.json()
     assert all(e["event_type"] == "agent_start" for e in data["events"])
+
+
+async def test_one_bad_event_does_not_sink_the_batch(client, db):
+    good_before, good_after = str(uuid.uuid4()), str(uuid.uuid4())
+    poison = make_run_start_event(str(uuid.uuid4()))
+    poison["agent_name"] = None  # NOT NULL column: the flush fails
+
+    resp = await client.post(
+        "/v1/events",
+        content=ndjson_body([make_run_start_event(good_before), poison, make_run_start_event(good_after)]),
+        headers={"Content-Encoding": "gzip", "Content-Type": "application/x-ndjson"},
+    )
+
+    assert resp.status_code == 202
+    assert resp.json()["accepted"] == 2
+    stored = (await db.execute(select(AuditRun.run_id))).scalars().all()
+    assert {good_before, good_after} <= set(stored)

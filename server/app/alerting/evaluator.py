@@ -37,11 +37,13 @@ async def evaluate_all_rules(db: AsyncSession) -> None:
         if rule.muted_until and rule.muted_until > now:
             continue
         try:
-            if rule.type == "cost_anomaly":
-                await _eval_cost_anomaly(rule, db)
-            elif rule.type == "error_rate":
-                await _eval_error_rate(rule, db)
-            # circuit_breaker_open + audit_integrity_failure are event-driven
+            # A savepoint per rule: one that fails to flush can't abort the cycle's transaction
+            async with db.begin_nested():
+                if rule.type == "cost_anomaly":
+                    await _eval_cost_anomaly(rule, db)
+                elif rule.type == "error_rate":
+                    await _eval_error_rate(rule, db)
+                # circuit_breaker_open + audit_integrity_failure are event-driven
         except Exception as exc:
             logger.warning("Rule %s evaluation failed: %s", rule.id, exc)
 

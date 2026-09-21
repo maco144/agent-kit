@@ -129,7 +129,8 @@ async def evaluate_all_budgets(db: AsyncSession, now: datetime | None = None) ->
     org_ids = (await db.execute(select(Budget.org_id).distinct())).scalars().all()
     for org_id in org_ids:
         try:
-            await evaluate_budgets(org_id, db, now)
+            async with db.begin_nested():  # one org's failure rolls back only that org
+                await evaluate_budgets(org_id, db, now)
         except Exception as exc:
             logger.warning("Budget evaluation failed for org %s: %s", org_id, exc)
 

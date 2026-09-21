@@ -64,3 +64,36 @@ async def test_run_forever_logs_errors_and_keeps_going(monkeypatch, caplog):
 
     assert len(attempts) >= 2  # the loop survived the first failure
     assert any("db down" in r.getMessage() for r in caplog.records)
+
+
+async def test_a_rule_that_fails_to_flush_does_not_stop_the_cycle(monkeypatch, db):
+    import uuid
+
+    from app.models import AlertRule, Budget, CloudEventLog
+
+    org_a, org_b = str(uuid.uuid4()), str(uuid.uuid4())
+    db.add_all([
+        AlertRule(org_id=org_a, name="broken", type="cost_anomaly"),
+        AlertRule(org_id=org_b, name="healthy", type="cost_anomaly"),
+        Budget(org_id=org_b, name="daily", period="daily", limit_usd=10.0),
+    ])
+    await db.commit()
+
+    evaluated: list[str] = []
+
+    async def eval_rule(rule, session):
+        if rule.name == "broken":
+            session.add(CloudEventLog(event_id=str(uuid.uuid4()), org_id=rule.org_id, run_id="r",
+                                      agent_name=None, project="p", event_type="x", payload={}))
+            await session.flush()  # NOT NULL agent_name: IntegrityError
+        evaluated.append(rule.name)
+
+    async def eval_budgets(org_id, session, now=None):
+        evaluated.append(f"budgets:{org_id}")
+
+    monkeypatch.setattr("app.alerting.evaluator._eval_cost_anomaly", eval_rule)
+    monkeypatch.setattr("app.budgets.evaluate_budgets", eval_budgets)
+
+    await worker.run_cycle()
+
+    assert "healthy" in evaluated and f"budgets:{org_b}" in evaluated
