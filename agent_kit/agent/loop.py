@@ -16,6 +16,7 @@ from agent_kit.audit.chain import AuditChain
 from agent_kit.durable import Checkpointer, PendingTurn, RunCheckpoint, RunStatus, RunStore
 from agent_kit.exceptions import (
     BudgetExceededError,
+    ProviderError,
     MaxTurnsExceededError,
     OutputValidationError,
     RunConflictError,
@@ -111,6 +112,7 @@ class AgentLoop:
         max_delegation_depth: int = 5,
         parent_run_id: str | None = None,
         parent_call_id: str | None = None,
+        llm_timeout_s: float | None = None,
     ) -> None:
         self._provider = provider
         self._registry = registry
@@ -134,6 +136,8 @@ class AgentLoop:
         self._approver = approver
         self._approval_timeout_s = approval_timeout_s
         self._output_retries = output_retries
+        self._llm_timeout_s = llm_timeout_s
+        self._stream_deadline: float | None = None  # loop time by which the open stream must finish
         self._request_options = request_options or RequestOptions()
         self._context_budget_tokens = context_budget_tokens
         self._last_prompt_tokens = 0  # prompt tokens the provider reported for the previous call
@@ -330,7 +334,7 @@ class AgentLoop:
                                     else:
                                         chunks.append(item)
                                         yield item
-                                    item = await anext(it, None)
+                                    item = await self._next_item(it)
                                 if streamed is not None:
                                     turn = streamed
                                 else:  # provider streams text only
@@ -346,7 +350,7 @@ class AgentLoop:
                                     self._cb_call,
                                     self._retry_policy,
                                     run_id,
-                                    self._provider.complete,
+                                    self._complete,
                                     messages,
                                     model=self._model,
                                     tools=tool_schemas if tool_schemas else None,
@@ -803,7 +807,34 @@ class AgentLoop:
             max_tokens=self._max_tokens_per_turn,
             **output_kwargs,
         ).__aiter__()
-        return it, await anext(it, None)
+        timeout = self._llm_timeout_s
+        self._stream_deadline = None if timeout is None else asyncio.get_running_loop().time() + timeout
+        return it, await self._next_item(it)
+
+    async def _next_item(self, it: AsyncIterator[str | Turn]) -> str | Turn | None:
+        """The stream's next item, within what is left of the call's deadline."""
+        if self._stream_deadline is None:
+            return await anext(it, None)
+        remaining = max(0.0, self._stream_deadline - asyncio.get_running_loop().time())
+        try:
+            return await asyncio.wait_for(anext(it, None), remaining)
+        except asyncio.TimeoutError:
+            raise self._timed_out() from None
+
+    async def _complete(self, *args: Any, **kwargs: Any) -> Turn:
+        """provider.complete() within the per-call deadline."""
+        if self._llm_timeout_s is None:
+            return await self._provider.complete(*args, **kwargs)
+        try:
+            return await asyncio.wait_for(self._provider.complete(*args, **kwargs), self._llm_timeout_s)
+        except asyncio.TimeoutError:
+            raise self._timed_out() from None
+
+    def _timed_out(self) -> ProviderError:
+        # Per-read timeouts never fire while a stalled stream still sends keepalive pings
+        return ProviderError(
+            f"{self._provider.name()} returned no complete response within {self._llm_timeout_s:g}s"
+        )
 
     async def _run_tool(
         self, tc: ToolCall, turn: int, gate: bool = True, approvals: dict[str, bool] | None = None

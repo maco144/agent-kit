@@ -70,6 +70,7 @@ class AgentConfig:
         context_budget_tokens: int | None = 150_000,
         run_store: RunStore | None = None,
         max_delegation_depth: int = 5,
+        llm_timeout_s: float | None = 600.0,
     ) -> None:
         self.model = model
         self.system_prompt = system_prompt
@@ -97,6 +98,7 @@ class AgentConfig:
         self.context_budget_tokens = context_budget_tokens  # over budget → cut history once to half
         self.run_store = run_store  # checkpoints: resume after crashes, suspend for approvals
         self.max_delegation_depth = max_delegation_depth  # nested agent-tool levels allowed below a top-level run
+        self.llm_timeout_s = llm_timeout_s  # wall-clock cap per model call, streams included; then ProviderError
 
 
 class Agent:
@@ -368,6 +370,7 @@ class Agent:
             approver=self._config.approver,
             approval_timeout_s=self._config.approval_timeout_s,
             output_retries=self._config.output_retries,
+            llm_timeout_s=self._config.llm_timeout_s,
             request_options=RequestOptions(
                 thinking=self._config.thinking,
                 effort=self._config.effort,

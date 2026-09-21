@@ -1,4 +1,4 @@
-"""Runs that end mid tool call: cancellation, crashes over persistent memory, and what the next run sends."""
+"""Runs that end mid tool call or stall mid model call: cancellation, crashes, deadlines."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from agent_kit import Agent, AgentConfig, tool
 from agent_kit.cloud.models import CloudEvent
 from agent_kit.cloud.reporter import CloudReporter
 from agent_kit.durable import SQLiteRunStore
+from agent_kit.exceptions import ProviderError
 from agent_kit.memory import SQLiteMemory
 from agent_kit.providers.base import ProviderConfig
 from agent_kit.types import CostSummary, Message, RetryPolicyConfig, ToolCall, Turn
@@ -120,3 +121,53 @@ async def test_cancelled_run_is_marked_failed_and_reported(tmp_path):
     assert stored is not None and stored.status == "failed"
     assert stored.error is not None and stored.error.startswith("CancelledError")
     assert "run_error" in [e.event_type.value for e in events]
+
+
+# ---------------------------------------------------------------------------
+# Model calls that stall
+# ---------------------------------------------------------------------------
+
+
+class Stalling:
+    """Answers after ``stalls`` hung calls; a stream yields one chunk, then hangs (a stall behind keepalive pings)."""
+
+    config = ProviderConfig(default_model="stalling")
+
+    def __init__(self, stalls: int = 0) -> None:
+        self.stalls = stalls
+        self.calls = 0
+
+    def name(self) -> str:
+        return "stalling"
+
+    async def complete(self, messages: list[Message], **kw: Any) -> Turn:
+        self.calls += 1
+        if self.calls <= self.stalls:
+            await asyncio.sleep(3600)
+        return final("answered")
+
+    async def stream(self, messages: list[Message], **kw: Any) -> Any:
+        self.calls += 1
+        yield "partial "
+        await asyncio.sleep(3600)
+        yield final("never")
+
+
+async def test_a_stalled_model_call_is_retried():
+    provider = Stalling(stalls=1)
+    agent = Agent(provider, config=AgentConfig(llm_timeout_s=0.1))
+    result = await asyncio.wait_for(agent.run("go"), timeout=5)
+    assert (result.output, provider.calls) == ("answered", 2)
+
+
+async def test_a_stream_that_stalls_after_text_fails_instead_of_hanging():
+    agent = Agent(Stalling(), config=AgentConfig(llm_timeout_s=0.1))
+    chunks: list[str] = []
+    with pytest.raises(ProviderError, match="within 0.1s"):
+        async for chunk in agent.stream("go"):
+            chunks.append(chunk)
+    assert chunks == ["partial "]
+
+
+def test_model_calls_have_a_default_deadline():
+    assert AgentConfig().llm_timeout_s == 600.0
