@@ -542,7 +542,7 @@
       "provider_mocking": "fake clients recording request kwargs (respx does not intercept anthropic>=1.0 httpx2)"
     },
     "server": {
-      "collected": 174,
+      "collected": 175,
       "files": [
         "test_alerts.py",
         "test_audit_chain_append.py",
@@ -554,6 +554,7 @@
         "test_otlp_decode.py",
         "test_otlp_ingest.py",
         "test_otlp_normalize.py",
+        "test_root.py",
         "test_support.py",
         "test_tool_output_flagged.py",
         "test_worker.py"

@@ -31,7 +31,7 @@ agent-kit/
 │   └── integrations/           # recorder.py (RunRecorder), claude_agent_sdk.py (ClaudeAgentObserver), openai_agents.py (AgentKitTraceProcessor, AgentKitRunHooks)
 ├── server/                     # agent-kit Cloud (FastAPI + SQLAlchemy async + Alembic)
 │   ├── app/
-│   │   ├── main.py             # app + lifespan; alert worker when ENABLE_ALERT_WORKER=1
+│   │   ├── main.py             # app + lifespan; GET / pointer, /healthz; in-process worker only when ENABLE_ALERT_WORKER=1
 │   │   ├── auth.py · database.py · models.py · schemas.py
 │   │   ├── cli.py              # `agentkit-server`: create-org, list-orgs, create-key, list-keys, revoke-key
 │   │   ├── worker.py           # `python -m app.worker`: alerts + budgets + retention, 60s cadence
@@ -43,10 +43,10 @@ agent-kit/
 │   │   └── compliance/         # signing.py (Ed25519 + rotation), bundle.py, retention.py (holds, purge, receipts)
 │   ├── Dockerfile · docker-entrypoint.sh · docker-compose.yml · .env.example   # api + worker + postgres
 │   ├── migrations/versions/    # 001–007
-│   └── tests/                  # 13 test files + conftest + otlp_helpers
+│   └── tests/                  # 14 test files + conftest + otlp_helpers
 ├── tests/                      # 25 SDK test files + conftest + injection_fixtures.py (the only home of injection payloads) + fixtures/mcp_fixture_server.py
 ├── examples/                   # 15 runnable scripts + README
-├── docs/                       # 4 cloud docs + superpowers/plans/ (13 implementation plans)
+├── docs/                       # 5 cloud docs + superpowers/plans/ (13 implementation plans)
 ├── specs/                      # 00–18
 └── .github/workflows/ci.yml
 ```
@@ -148,7 +148,7 @@ Cloud wire `EventType`: `run_start`, `turn_complete`, `run_complete`, `run_error
 ## 📚 Docs & Specs
 
 - `README.md` — quick start + a section per feature (hooks, MCP, typed, context, durable); `CHANGELOG.md` — `[Unreleased]` holds everything since 0.2.0; `CONTRIBUTING.md`
-- `docs/` — `cloud-quickstart.md`, `self-hosting.md` (Docker stack, `agentkit-server`, TLS, backups), `api-reference.md` (covers traces, budgets, compliance), `troubleshooting.md`
+- `docs/` — `cloud-quickstart.md`, `self-hosting.md` (Docker stack, `agentkit-server`, TLS, backups), `deploy-rising.md` (live rising deployment runbook), `api-reference.md` (covers traces, budgets, compliance), `troubleshooting.md`
 - `docs/superpowers/plans/` — implementation plans for tier-1 fundamentals, harness adapters, OTLP, cost breaker, compliance, hooks, MCP, typed results, context mgmt, durable runs, agents as tools, tool output scanning
 - `specs/` — 00 platform · 01 audit trail · 02 fleet dashboard · 03 alerting · 04 SLA support · **05 dashboard UI (not built)** · 06 harness roadmap (tier status) · 07 harness adapters · 08 OTLP ingest · 09 cost breaker · 10 compliance exports · 11 hooks · 12 MCP client · 13 typed results · 14 context mgmt · 15 durable runs · 16 agents as tools · 17 tool output scanning · 18 cloud deployment
 

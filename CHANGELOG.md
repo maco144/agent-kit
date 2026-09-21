@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 
 ## [Unreleased]
 
+### Added
+- **Server deployment stack.** `server/Dockerfile` and `server/docker-compose.yml` run `api`, `worker`, and `postgres`; the API applies Alembic migrations at start (`RUN_MIGRATIONS=0` skips it). See `docs/self-hosting.md` and `specs/18-cloud-deployment.md`.
+- **Standalone worker.** `python -m app.worker` evaluates polled alert rules, fleet budgets, and retention purges every 60 seconds as its own process, so exactly one evaluator runs however many API workers serve traffic. `ENABLE_ALERT_WORKER=1` still runs it inside the API for local development.
+- **`agentkit-server` admin CLI** — `create-org`, `list-orgs`, `create-key`, `list-keys`, `revoke-key`. The server has no sign-up UI; this is how orgs and API keys are provisioned.
+- `GET /` returns a service pointer (name, version, `/docs`, `/healthz`, source) instead of a 404.
+
 ## [0.4.1] — 2026-09-15
 
 ### Changed

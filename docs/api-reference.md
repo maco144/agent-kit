@@ -707,7 +707,7 @@ A signed evidence bundle (`application/zip`) of audit runs started in `[from, to
 | Pro | 90 days |
 | Enterprise | 365 days by default; `PUT {"audit_retention_days": 1..2555}` (or `null` to reset) |
 
-`PUT` returns `403` below enterprise and `400` out of range. Retention applies to audit runs and events only; purging requires the background worker (`ENABLE_ALERT_WORKER=1`).
+`PUT` returns `403` below enterprise and `400` out of range. Retention applies to audit runs and events only; purging requires the worker (`python -m app.worker`, or `ENABLE_ALERT_WORKER=1` on the API in local development).
 
 ### Legal holds
 
@@ -850,6 +850,14 @@ Valid tiers: `free`, `pro`, `enterprise`.
 ---
 
 ## Health
+
+### GET /
+
+Unauthenticated service pointer:
+
+```json
+{"service": "agent-kit Cloud", "version": "0.1.0", "docs": "/docs", "health": "/healthz", "source": "https://github.com/maco144/agent-kit"}
+```
 
 ### GET /healthz
 
