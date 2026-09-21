@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 
 ## [Unreleased]
 
+### Fixed
+- **A run that ends mid tool call no longer poisons the next request.** A cancelled run (`asyncio.wait_for`, task cancel) or a crash over persistent memory left the model's tool call without a result, and every later run on the same Agent was rejected by the provider. Unanswered calls now get their result — or `Tool call interrupted: the run ended before it returned` — when the run exits and again before the next run starts. Cancelled runs are marked `failed` in the run store and reported as `run_error` instead of staying `running`.
+- **Cut-off responses are no longer treated as complete.** A response stopped at the output limit (`stop_reason: max_tokens`, `finish_reason: length`) raises `ResponseTruncatedError` instead of running a tool on partial arguments or returning half an answer as a completed run. A stream that closes before the provider finishes the message raises `ProviderError` (retried if no text had been yielded) instead of yielding a partial turn with empty tool arguments and $0 cost.
+
 ### Added
 - **Server deployment stack.** `server/Dockerfile` and `server/docker-compose.yml` run `api`, `worker`, and `postgres`; the API applies Alembic migrations at start (`RUN_MIGRATIONS=0` skips it). See `docs/self-hosting.md` and `specs/18-cloud-deployment.md`.
 - **Standalone worker.** `python -m app.worker` evaluates polled alert rules, fleet budgets, and retention purges every 60 seconds as its own process, so exactly one evaluator runs however many API workers serve traffic. `ENABLE_ALERT_WORKER=1` still runs it inside the API for local development.

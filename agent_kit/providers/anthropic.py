@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
-from agent_kit.exceptions import ProviderError
+from agent_kit.exceptions import ProviderError, ResponseTruncatedError
 from agent_kit.providers.base import ProviderConfig
 from agent_kit.providers.pricing import lookup_rates
 from agent_kit.types import CostSummary, Message, RequestOptions, ToolCall, ToolSchema, Turn
@@ -48,6 +48,9 @@ _CACHE_WRITE_MULTIPLIER = 1.25
 
 _DEFAULT_MODEL = "claude-opus-5"
 
+# Stop reasons that mean the output was cut off: a tool_use input or the answer is incomplete
+_TRUNCATED_STOP_REASONS = frozenset({"max_tokens", "model_context_window_exceeded"})
+
 _COMPACTION_BETA = "compact-2026-01-12"
 _CONTEXT_EDITING_BETA = "context-management-2025-06-27"
 
@@ -72,6 +75,13 @@ def _estimate_cost(
         + cache_read_tokens * in_rate * read_multiplier
         + cache_write_tokens * in_rate * _CACHE_WRITE_MULTIPLIER
     ) / 1_000_000
+
+
+def _check_complete(response: Any, max_tokens: int) -> None:
+    """Refuse a cut-off response rather than run a tool on partial input or return half an answer."""
+    if getattr(response, "stop_reason", None) in _TRUNCATED_STOP_REASONS:
+        had_tool_calls = any(getattr(b, "type", None) == "tool_use" for b in response.content)
+        raise ResponseTruncatedError("anthropic", max_tokens, had_tool_calls)
 
 
 def _get(obj: Any, name: str) -> Any:
@@ -377,6 +387,7 @@ class AnthropicProvider:
         except anthropic.APIError as exc:
             raise ProviderError(f"Anthropic API error: {exc}") from exc
 
+        _check_complete(response, max_tokens)
         return _turn_from_response(
             response, messages, resolved_model, int((time.monotonic() - t0) * 1000)
         )
@@ -409,6 +420,9 @@ class AnthropicProvider:
         except anthropic.APIError as exc:
             raise ProviderError(f"Anthropic stream error: {exc}") from exc
 
+        if getattr(final, "stop_reason", None) is None:  # the connection closed before message_stop
+            raise ProviderError("Anthropic stream ended before the message finished")
+        _check_complete(final, max_tokens)
         yield _turn_from_response(
             final, messages, resolved_model, int((time.monotonic() - t0) * 1000)
         )

@@ -37,6 +37,18 @@ Common issues, their root causes, and how to resolve them.
 
 ---
 
+## `ResponseTruncatedError`
+
+**Symptom:** A run raises `ResponseTruncatedError: anthropic response cut off at max_tokens (4096) mid the answer`, or `... mid a tool call`.
+
+**Root cause:** The model reached its output limit (`stop_reason: max_tokens` on Anthropic, `finish_reason: length` on OpenAI and Ollama). Its tool arguments or its answer are incomplete, so agent-kit stops rather than run a tool on partial input or report half an answer as a completed run. Thinking tokens count against the same limit, so adaptive thinking on Claude Opus 5 can use up the default 4096 before the answer starts.
+
+**Resolution:** Raise the per-turn limit — `AgentConfig(max_tokens_per_turn=16000)` — or lower the thinking effort (`AgentConfig(effort="low")`). The error is not retried: the same request would stop at the same place.
+
+A stream that closes before the provider finishes the message raises `ProviderError("... stream ended before ...")` instead. It is retried when no text had been yielded yet; after text has been streamed it propagates, since replaying would duplicate output.
+
+---
+
 ## Audit integrity failure
 
 **Symptom:** An audit run shows `integrity: "failed"` in the dashboard or `GET /v1/audit/runs/{run_id}/verify` returns `verified: false`.

@@ -6,7 +6,7 @@ import json
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
-from agent_kit.exceptions import ProviderError
+from agent_kit.exceptions import ProviderError, ResponseTruncatedError
 from agent_kit.providers.base import ProviderConfig
 from agent_kit.providers.pricing import lookup_rates
 from agent_kit.types import CostSummary, Message, RequestOptions, ToolCall, ToolSchema, Turn
@@ -195,6 +195,8 @@ class OpenAIProvider:
         duration_ms = int((time.monotonic() - t0) * 1000)
         choice = response.choices[0]
         msg = choice.message
+        if choice.finish_reason == "length":
+            raise ResponseTruncatedError(self.name(), max_tokens, bool(msg.tool_calls))
 
         tool_calls: list[ToolCall] = []
         if msg.tool_calls:
@@ -262,6 +264,7 @@ class OpenAIProvider:
         text_parts: list[str] = []
         pending: dict[int, dict[str, str]] = {}  # tool-call deltas by index
         input_tokens = output_tokens = 0
+        finish_reason: str | None = None
         t0 = time.monotonic()
         try:
             stream: openai.AsyncStream[ChatCompletionChunk] = (
@@ -274,6 +277,7 @@ class OpenAIProvider:
                         output_tokens = chunk.usage.completion_tokens
                     if not chunk.choices:
                         continue
+                    finish_reason = getattr(chunk.choices[0], "finish_reason", None) or finish_reason
                     delta = chunk.choices[0].delta
                     if delta.content:
                         text_parts.append(delta.content)
@@ -293,6 +297,10 @@ class OpenAIProvider:
         except openai.APIError as exc:
             raise ProviderError(f"OpenAI stream error: {exc}") from exc
 
+        if finish_reason is None:  # the connection closed before the final chunk
+            raise ProviderError(f"{self.name()} stream ended before the response finished")
+        if finish_reason == "length":
+            raise ResponseTruncatedError(self.name(), max_tokens, bool(pending))
         tool_calls = [
             ToolCall(
                 tool_name=slot["name"],

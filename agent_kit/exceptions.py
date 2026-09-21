@@ -13,6 +13,20 @@ class ProviderError(AgentKitError):
     """LLM provider returned an error or is unreachable."""
 
 
+class ResponseTruncatedError(AgentKitError):
+    """The model hit its output token limit: tool arguments or the answer are incomplete. Not retried."""
+
+    def __init__(self, provider: str, max_tokens: int, had_tool_calls: bool) -> None:
+        self.provider = provider
+        self.max_tokens = max_tokens
+        self.had_tool_calls = had_tool_calls
+        cut = "a tool call" if had_tool_calls else "the answer"
+        super().__init__(
+            f"{provider} response cut off at max_tokens ({max_tokens}) mid {cut}; "
+            "raise AgentConfig(max_tokens_per_turn=...)"
+        )
+
+
 class ToolNotFoundError(AgentKitError):
     """Agent tried to call a tool that isn't registered."""
 

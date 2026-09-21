@@ -16,6 +16,7 @@ import pytest
 from pydantic import BaseModel
 
 from agent_kit import Agent, tool
+from agent_kit.exceptions import ProviderError, ResponseTruncatedError
 from agent_kit.output import OutputSpec
 from agent_kit.providers import anthropic as anthropic_provider
 from agent_kit.providers.anthropic import AnthropicProvider
@@ -350,9 +351,12 @@ async def test_anthropic_stream_runs_tools_through_loop():
 
 
 def openai_chunk(
-    content: str | None = None, tool_calls: list[NS] | None = None, usage: NS | None = None
+    content: str | None = None,
+    tool_calls: list[NS] | None = None,
+    usage: NS | None = None,
+    finish_reason: str | None = None,
 ) -> NS:
-    choices = [] if usage else [NS(delta=NS(content=content, tool_calls=tool_calls))]
+    choices = [] if usage else [NS(delta=NS(content=content, tool_calls=tool_calls), finish_reason=finish_reason)]
     return NS(choices=choices, usage=usage)
 
 
@@ -382,13 +386,14 @@ async def test_openai_stream_assembles_tool_call_deltas():
                 tool_calls=[NS(index=0, id="call_1", function=NS(name="get_weather", arguments='{"ci'))]
             ),
             openai_chunk(tool_calls=[NS(index=0, id=None, function=NS(name=None, arguments='ty": "Paris"}'))]),
+            openai_chunk(finish_reason="tool_calls"),
             openai_chunk(usage=NS(prompt_tokens=10, completion_tokens=5)),
         ]
     )
     second = FakeOpenAIStream(
         [
             openai_chunk("21C "),
-            openai_chunk("in Paris"),
+            openai_chunk("in Paris", finish_reason="stop"),
             openai_chunk(usage=NS(prompt_tokens=20, completion_tokens=4)),
         ]
     )
@@ -472,7 +477,7 @@ async def test_openai_stream_sends_response_format():
     from agent_kit.providers.openai import OpenAIProvider
 
     provider = OpenAIProvider(api_key="test")
-    fake = FakeOpenAI([FakeOpenAIStream([openai_chunk("{}"), openai_chunk(usage=NS(prompt_tokens=1, completion_tokens=1))])])
+    fake = FakeOpenAI([FakeOpenAIStream([openai_chunk("{}", finish_reason="stop"), openai_chunk(usage=NS(prompt_tokens=1, completion_tokens=1))])])
     provider._client = fake  # type: ignore[assignment]
 
     [c async for c in provider.stream(ASK, output_schema=WEATHER)]
@@ -692,3 +697,85 @@ async def test_openai_request_options():
 
 def test_anthropic_provider_defaults_to_the_current_model():
     assert AnthropicProvider(api_key="test").config.default_model == "claude-opus-5"
+
+
+# ---------------------------------------------------------------------------
+# Truncated and cut responses
+# ---------------------------------------------------------------------------
+
+weather_calls: list[str] = []
+
+
+@tool(description="Weather for a city, recording each call")
+async def recorded_weather(city: str) -> dict[str, Any]:
+    weather_calls.append(city)
+    return {"city": city}
+
+
+async def test_anthropic_tool_call_cut_at_max_tokens_is_not_executed():
+    weather_calls.clear()
+    agent, _ = anthropic_agent(
+        [anthropic_response([tool_use_block("toolu_1", "recorded_weather", {"ci": "Par"})], "max_tokens")],
+        tools=[recorded_weather],
+    )
+    with pytest.raises(ResponseTruncatedError, match="max_tokens"):
+        await agent.run("weather?")
+    assert weather_calls == []
+
+
+async def test_anthropic_answer_cut_at_max_tokens_is_not_a_completed_run():
+    agent, _ = anthropic_agent([anthropic_response([text_block("The answer is")], "max_tokens")], tools=[])
+    with pytest.raises(ResponseTruncatedError):
+        await agent.run("question")
+
+
+async def test_anthropic_stream_that_ends_without_a_stop_reason_fails():
+    provider = AnthropicProvider(api_key="test")
+    cut = FakeAnthropicStream(["The answer"], anthropic_response([text_block("The answer")], None))  # type: ignore[arg-type]
+    provider._client = NS(messages=NS(stream=lambda **kw: cut))  # type: ignore[assignment]
+    with pytest.raises(ProviderError, match="ended before"):
+        [c async for c in Agent(provider).stream("question")]
+
+
+@requires_openai
+async def test_openai_tool_call_cut_at_length_is_not_executed():
+    weather_calls.clear()
+    response = openai_response(None, [openai_tool_call("call_1", "recorded_weather", '{"city": "Pa')])
+    response.choices[0].finish_reason = "length"
+    agent, _ = openai_agent([response], tools=[recorded_weather])
+    with pytest.raises(ResponseTruncatedError, match="max_tokens"):
+        await agent.run("weather?")
+    assert weather_calls == []
+
+
+@requires_openai
+async def test_openai_stream_cut_mid_tool_call_is_retried_not_executed():
+    weather_calls.clear()
+
+    def tool_stream(arguments: str, finish_reason: str | None) -> FakeOpenAIStream:
+        delta = NS(index=0, id="call_1", function=NS(name="recorded_weather", arguments=arguments))
+        return FakeOpenAIStream([openai_chunk(tool_calls=[delta], finish_reason=finish_reason)])
+
+    agent, fake = openai_agent(
+        [tool_stream("", None), tool_stream('{"city": "Paris"}', "tool_calls"),
+         FakeOpenAIStream([openai_chunk("done", finish_reason="stop")])],
+        tools=[recorded_weather],
+    )
+    assert "".join([c async for c in agent.stream("weather?")]) == "done"
+    assert weather_calls == ["Paris"] and len(fake.calls) == 3
+
+
+@requires_openai
+async def test_openai_stream_cut_after_text_fails():
+    agent, _ = openai_agent([FakeOpenAIStream([openai_chunk("The answer")])], tools=[])
+    with pytest.raises(ProviderError, match="ended before"):
+        [c async for c in agent.stream("question")]
+
+
+@requires_openai
+async def test_openai_stream_cut_at_length_fails():
+    agent, _ = openai_agent(
+        [FakeOpenAIStream([openai_chunk("The answer is"), openai_chunk(finish_reason="length")])], tools=[]
+    )
+    with pytest.raises(ResponseTruncatedError):
+        [c async for c in agent.stream("question")]
