@@ -261,6 +261,9 @@ class AgentLoop:
                         actor=run_id,
                         payload={"prompt_preview": prompt[:200], "context_keys": list(context.keys())},
                     )
+                # A run that died mid tool call (cancelled, or a crash over persistent memory) left calls
+                # without results; every later request would be rejected until they are answered
+                self._answer_unfinished_calls()
                 # Seed memory with the user prompt
                 self._memory.add(Message(role="user", content=prompt))
                 if self._checkpointer is not None:
@@ -449,7 +452,8 @@ class AgentLoop:
                     if self._pending_stop is not None:
                         raise self._pending_stop
 
-            except Exception as exc:
+            except (Exception, asyncio.CancelledError) as exc:
+                self._answer_unfinished_calls()
                 if self._reporter:
                     await self._reporter.on_run_error(run_id, exc, turn_count)
                 if self._checkpointer is not None and not isinstance(exc, RunConflictError):
@@ -636,20 +640,28 @@ class AgentLoop:
                     if tc.call_id in pending.delegated_root_hash:
                         payload["delegated_root_hash"] = pending.delegated_root_hash[tc.call_id]
                 self._audit.append("tool_call", actor=tc.tool_name, payload=payload)
-            output_str = (
-                f"Error: {tool_result.error}"
-                if tool_result.error
-                else json.dumps(tool_result.output, default=str)
-            )
-            self._memory.add(
-                Message(
-                    role="tool",
-                    content=output_str,
-                    tool_call_id=tc.call_id,
-                    metadata={"is_error": True} if tool_result.error else {},
-                )
-            )
+            self._memory.add(_tool_message(tool_result))
             turn.tool_results.append(tool_result)
+
+    def _answer_unfinished_calls(self) -> None:
+        """Give the last model turn's unanswered tool calls a result: the one it produced, else an error."""
+        messages = self._memory.history(include_system=False)
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].role == "tool":
+                continue
+            if messages[i].role != "assistant":
+                return
+            answered = {m.tool_call_id for m in messages[i + 1:]}
+            results = self._pending.results if self._pending is not None else {}
+            for tc in messages[i].tool_calls:
+                if tc.call_id not in answered:
+                    self._memory.add(_tool_message(results.get(tc.call_id) or ToolResult(
+                        call_id=tc.call_id,
+                        tool_name=tc.tool_name,
+                        output=None,
+                        error="Tool call interrupted: the run ended before it returned",
+                    )))
+            return
 
     def _is_idempotent(self, tool_name: str) -> bool:
         try:
@@ -1052,3 +1064,13 @@ class AgentLoop:
                 new_state=new_state.value,
                 failure_count=failure_count,
             )
+
+
+def _tool_message(result: ToolResult) -> Message:
+    """A tool result as the conversation message the model reads next."""
+    return Message(
+        role="tool",
+        content=f"Error: {result.error}" if result.error else json.dumps(result.output, default=str),
+        tool_call_id=result.call_id,
+        metadata={"is_error": True} if result.error else {},
+    )

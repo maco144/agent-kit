@@ -168,7 +168,7 @@ class CloudReporter:
         ))
 
     async def on_run_error(
-        self, run_id: str, exc: Exception, turn_count: int
+        self, run_id: str, exc: BaseException, turn_count: int
     ) -> None:
         await self._enqueue(CloudEvent(
             event_type=EventType.RUN_ERROR,
