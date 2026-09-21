@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from agent_kit.exceptions import ProviderError, ResponseTruncatedError
 from agent_kit.providers.base import ProviderConfig
-from agent_kit.providers.pricing import cached_input_rate, lookup_rates
+from agent_kit.providers.pricing import cached_input_rate, lookup_multiplier, lookup_rates
 from agent_kit.types import CostSummary, Message, RequestOptions, ToolCall, ToolSchema, Turn
 
 if TYPE_CHECKING:
@@ -23,18 +23,55 @@ except ImportError as e:
         "Install it with: pip install agent-kit-ai[openai]"
     ) from e
 
+# USD per million tokens (input, output), standard tier. Longest matching prefix wins, so every -pro model is
+# listed: unlisted, it would match its base model at a fraction of the price. gpt-5.5 / gpt-5.4 prompts over
+# 272K tokens bill higher; these are the short-context rates. Advisory — billing comes from OpenAI.
+# Source: developers.openai.com/api/docs/pricing, 2026-09-21. Keep server/app/otlp/pricing.py in step.
 _COST_TABLE: dict[str, tuple[float, float]] = {
-    "gpt-4o":        (2.50, 10.00),
-    "gpt-4o-mini":   (0.15, 0.60),
+    "gpt-6-astra":   (10.00, 50.00),
+    "gpt-5.6-sol":   (4.00,  20.00),
+    "gpt-5.6-terra": (2.00,  12.00),
+    "gpt-5.6-luna":  (0.20,  1.20),
+    "gpt-5.5":       (5.00,  30.00),
+    "gpt-5.5-pro":   (30.00, 180.00),
+    "gpt-5.4":       (2.50,  15.00),
+    "gpt-5.4-mini":  (0.75,  4.50),
+    "gpt-5.4-nano":  (0.20,  1.25),
+    "gpt-5.4-pro":   (30.00, 180.00),
+    "gpt-5.3-codex": (1.75,  14.00),
+    "gpt-5.2":       (1.75,  14.00),
+    "gpt-5.2-pro":   (21.00, 168.00),
+    "gpt-5.1":       (1.25,  10.00),
+    "gpt-5":         (1.25,  10.00),
+    "gpt-5-mini":    (0.25,  2.00),
+    "gpt-5-nano":    (0.05,  0.40),
+    "gpt-5-pro":     (15.00, 120.00),
+    "gpt-4.1":       (2.00,  8.00),
+    "gpt-4.1-mini":  (0.40,  1.60),
+    "gpt-4.1-nano":  (0.10,  0.40),
+    "gpt-4o":        (2.50,  10.00),
+    "gpt-4o-mini":   (0.15,  0.60),
     "gpt-4-turbo":   (10.00, 30.00),
     "gpt-4":         (30.00, 60.00),
-    "gpt-3.5-turbo": (0.50, 1.50),
+    "gpt-3.5-turbo": (0.50,  1.50),
     "o1":            (15.00, 60.00),
-    "o1-mini":       (3.00, 12.00),
+    "o1-pro":        (150.00, 600.00),
+    "o1-mini":       (3.00,  12.00),
+    "o3":            (2.00,  8.00),
+    "o3-mini":       (1.10,  4.40),
+    "o3-pro":        (20.00, 80.00),
+    "o4-mini":       (1.10,  4.40),
 }
 
-# Every model in _COST_TABLE that supports prompt caching bills cached prompt tokens at half the input rate
-_CACHED_INPUT_MULTIPLIER = 0.5
+# Cached prompt tokens as a fraction of the input rate. Longest matching prefix wins; unlisted models 0.5x.
+_CACHED_INPUT_MULTIPLIER: dict[str, float] = {
+    "gpt-6": 0.1,
+    "gpt-5": 0.1,
+    "gpt-4.1": 0.25,
+    "o3": 0.25,
+    "o3-mini": 0.5,
+    "o4-mini": 0.25,
+}
 
 _DEFAULT_MODEL = "gpt-4o"
 
@@ -47,7 +84,7 @@ def _estimate_cost(model: str, input_tokens: int, output_tokens: int, cached_tok
     in_rate, out_rate = rates
     cached_rate = cached_input_rate(model)
     if cached_rate is None:
-        cached_rate = in_rate * _CACHED_INPUT_MULTIPLIER
+        cached_rate = in_rate * (lookup_multiplier(_CACHED_INPUT_MULTIPLIER, model) or 0.5)
     return (input_tokens * in_rate + cached_tokens * cached_rate + output_tokens * out_rate) / 1_000_000
 
 

@@ -876,3 +876,43 @@ async def test_set_price_cached_input_rate():
     finally:
         clear_prices()
     assert result.total_cost_usd == pytest.approx(0.1)
+
+
+# OpenAI standard-tier prices, developers.openai.com/api/docs/pricing (2026-09-21): input, cached input, output
+OPENAI_PRICES = [
+    ("gpt-6-astra", 10.00, 1.00, 50.00),
+    ("gpt-5.6-sol", 4.00, 0.40, 20.00),
+    ("gpt-5.6-luna", 0.20, 0.02, 1.20),
+    ("gpt-5.5", 5.00, 0.50, 30.00),
+    ("gpt-5.4-mini", 0.75, 0.075, 4.50),
+    ("gpt-5.2", 1.75, 0.175, 14.00),
+    ("gpt-5", 1.25, 0.125, 10.00),
+    ("gpt-5-mini-2025-08-07", 0.25, 0.025, 2.00),
+    ("gpt-4.1", 2.00, 0.50, 8.00),
+    ("gpt-4.1-nano", 0.10, 0.025, 0.40),
+    ("gpt-4o", 2.50, 1.25, 10.00),
+    ("o3", 2.00, 0.50, 8.00),
+    ("o3-mini", 1.10, 0.55, 4.40),
+    ("o4-mini", 1.10, 0.275, 4.40),
+]
+
+
+@requires_openai
+@pytest.mark.parametrize(("model", "input_usd", "cached_usd", "output_usd"), OPENAI_PRICES)
+def test_openai_current_prices(model, input_usd, cached_usd, output_usd):
+    from agent_kit.providers import openai as openai_provider
+
+    m = 1_000_000
+    assert openai_provider._estimate_cost(model, m, 0) == pytest.approx(input_usd)
+    assert openai_provider._estimate_cost(model, 0, 0, cached_tokens=m) == pytest.approx(cached_usd)
+    assert openai_provider._estimate_cost(model, 0, m) == pytest.approx(output_usd)
+
+
+@requires_openai
+@pytest.mark.parametrize(("model", "input_usd", "output_usd"), [
+    ("gpt-5-pro", 15.00, 120.00), ("gpt-5.4-pro", 30.00, 180.00), ("o1-pro", 150.00, 600.00), ("o3-pro", 20.00, 80.00),
+])
+def test_openai_pro_models_are_not_priced_as_their_base_model(model, input_usd, output_usd):
+    from agent_kit.providers import openai as openai_provider
+
+    assert openai_provider._estimate_cost(model, 1_000_000, 1_000_000) == pytest.approx(input_usd + output_usd)

@@ -145,3 +145,23 @@ def test_pricing_cache_multipliers():
     # OpenAI bills cached prompt tokens at half the input rate
     assert estimate_cost("gpt-4o", 0, 0, 1_000_000) == pytest.approx(1.25)
     assert estimate_cost("o1-mini", 0, 0, 1_000_000) == pytest.approx(1.50)
+
+
+@pytest.mark.parametrize(("model", "input_usd", "cached_usd", "output_usd"), [
+    ("gpt-6-astra", 10.00, 1.00, 50.00),
+    ("gpt-5.4-mini", 0.75, 0.075, 4.50),
+    ("gpt-5", 1.25, 0.125, 10.00),
+    ("gpt-4.1", 2.00, 0.50, 8.00),
+    ("o3-mini", 1.10, 0.55, 4.40),
+    ("o4-mini", 1.10, 0.275, 4.40),
+])
+def test_pricing_current_openai_models(model, input_usd, cached_usd, output_usd):
+    m = 1_000_000
+    assert estimate_cost(model, m, 0) == pytest.approx(input_usd)
+    assert estimate_cost(model, 0, 0, m) == pytest.approx(cached_usd)
+    assert estimate_cost(model, 0, m) == pytest.approx(output_usd)
+
+
+def test_pricing_pro_models_are_not_priced_as_their_base_model():
+    assert estimate_cost("o1-pro", 1_000_000, 0) == pytest.approx(150.0)
+    assert estimate_cost("gpt-5-pro", 1_000_000, 0) == pytest.approx(15.0)

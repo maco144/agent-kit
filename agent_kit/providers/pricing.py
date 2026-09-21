@@ -57,3 +57,9 @@ def lookup_rates(table: dict[str, tuple[float, float]], model: str) -> tuple[flo
         _warned.add(model)
         logger.warning("No pricing for model %r; cost_usd will be reported as 0.0", model)
     return None
+
+
+def lookup_multiplier(table: dict[str, float], model: str) -> float | None:
+    """The value for the longest prefix of ``model`` in ``table``, or None."""
+    matches = [prefix for prefix in table if model.startswith(prefix)]
+    return table[max(matches, key=len)] if matches else None
