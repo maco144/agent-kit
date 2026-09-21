@@ -57,6 +57,21 @@ def _usage_value(usage: Any, key: str) -> int:
     return int(value or 0)
 
 
+def _input_split(usage: Any) -> tuple[int, int]:
+    """(uncached, cached) input tokens — the SDK's input_tokens includes prompt-cache reads."""
+    total = _usage_value(usage, "input_tokens")
+    if usage is None:
+        return total, 0
+    details = usage.get("input_tokens_details") if isinstance(usage, dict) else getattr(usage, "input_tokens_details", None)
+    cached = min(_usage_value(details, "cached_tokens"), total)
+    return total - cached, cached
+
+
+def _cost(model: str, usage: Any) -> float:
+    uncached, cached = _input_split(usage)
+    return price_call(model, uncached, _usage_value(usage, "output_tokens"), cached)
+
+
 def _duration_ms(span: Any) -> int:
     try:
         started = datetime.fromisoformat(span.started_at)
@@ -124,20 +139,24 @@ class AgentKitTraceProcessor(TracingProcessor):
 
         if kind == "response":
             response = data.response
-            usage = getattr(response, "usage", None) if response is not None else None
+            usage = (getattr(response, "usage", None) if response is not None else None) or data.usage
+            uncached, cached = _input_split(usage)
             self._recorder.llm_turn(
                 run_id,
                 getattr(response, "model", None),
-                input_tokens=_usage_value(usage or data.usage, "input_tokens"),
-                output_tokens=_usage_value(usage or data.usage, "output_tokens"),
+                input_tokens=uncached,
+                output_tokens=_usage_value(usage, "output_tokens"),
+                cache_read_tokens=cached,
                 duration_ms=_duration_ms(span),
             )
         elif kind == "generation":
+            uncached, cached = _input_split(data.usage)
             self._recorder.llm_turn(
                 run_id,
                 data.model,
-                input_tokens=_usage_value(data.usage, "input_tokens"),
+                input_tokens=uncached,
                 output_tokens=_usage_value(data.usage, "output_tokens"),
+                cache_read_tokens=cached,
                 duration_ms=_duration_ms(span),
             )
         elif kind == "function":
@@ -212,8 +231,7 @@ class AgentKitRunHooks(RunHooks[Any]):
         if not is_priced(_model_name(agent)):
             raise UnpricedModelError(_model_name(agent) or "<unset: pass the Agent a model name>")
         if self._max_run_cost_usd is not None:
-            usage = context.usage
-            spent = price_call(_model_name(agent), int(usage.input_tokens or 0), int(usage.output_tokens or 0))
+            spent = _cost(_model_name(agent), context.usage)
             if spent >= self._max_run_cost_usd:
                 raise BudgetExceededError(scope="run", limit_usd=self._max_run_cost_usd, spent_usd=spent)
 
@@ -223,8 +241,7 @@ class AgentKitRunHooks(RunHooks[Any]):
         if self._guard is None:
             return
         try:
-            usage = response.usage
-            cost = price_call(_model_name(agent), int(usage.input_tokens or 0), int(usage.output_tokens or 0))
+            cost = _cost(_model_name(agent), response.usage)
             self._guard.record_spend(self._name(agent), self._reporter.project, cost)
         except Exception:
             logger.debug("AgentKitRunHooks.on_llm_end failed", exc_info=True)

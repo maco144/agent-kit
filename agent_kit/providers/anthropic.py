@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from agent_kit.exceptions import ProviderError, ResponseTruncatedError
 from agent_kit.providers.base import ProviderConfig
-from agent_kit.providers.pricing import lookup_rates
+from agent_kit.providers.pricing import cached_input_rate, lookup_rates
 from agent_kit.types import CostSummary, Message, RequestOptions, ToolCall, ToolSchema, Turn
 
 if TYPE_CHECKING:
@@ -66,13 +66,15 @@ def _estimate_cost(
     if rates is None:
         return 0.0
     in_rate, out_rate = rates
-    read_multiplier = next(
-        (m for prefix, m in _CACHE_READ_MULTIPLIER.items() if model.startswith(prefix)), 0.1
-    )
+    read_rate = cached_input_rate(model)
+    if read_rate is None:
+        read_rate = in_rate * next(
+            (m for prefix, m in _CACHE_READ_MULTIPLIER.items() if model.startswith(prefix)), 0.1
+        )
     return (
         input_tokens * in_rate
         + output_tokens * out_rate
-        + cache_read_tokens * in_rate * read_multiplier
+        + cache_read_tokens * read_rate
         + cache_write_tokens * in_rate * _CACHE_WRITE_MULTIPLIER
     ) / 1_000_000
 

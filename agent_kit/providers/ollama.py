@@ -56,5 +56,7 @@ class OllamaProvider(OpenAIProvider):
     def name(self) -> str:
         return "ollama"
 
-    def _price(self, model: str, input_tokens: int, output_tokens: int) -> tuple[float, bool]:
+    def _price(
+        self, model: str, input_tokens: int, output_tokens: int, cached_tokens: int = 0
+    ) -> tuple[float, bool]:
         return 0.0, True  # local models: no per-token charge

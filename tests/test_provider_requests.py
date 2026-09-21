@@ -828,3 +828,51 @@ async def test_ollama_models_are_free_not_unpriced(caplog):
         result = await agent.run("hello")
     assert (result.output, result.total_cost_usd) == ("hi", 0.0)
     assert "llama-unlisted" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# OpenAI cached prompt tokens
+# ---------------------------------------------------------------------------
+
+
+def cached_usage(prompt_tokens: int, cached: int, completion_tokens: int = 0) -> NS:
+    return NS(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+              prompt_tokens_details=NS(cached_tokens=cached))
+
+
+@requires_openai
+async def test_openai_cached_prompt_tokens_bill_at_the_cached_rate():
+    response = openai_response("hi")
+    response.usage = cached_usage(1_000_000, 800_000)
+    agent, _ = openai_agent([response], tools=[])
+
+    result = await agent.run("hello")
+
+    (turn,) = result.turns
+    assert (turn.cost.input_tokens, turn.cost.cache_read_tokens) == (200_000, 800_000)
+    assert turn.cost.total_tokens == 1_000_000
+    assert result.total_cost_usd == pytest.approx(0.2 * 2.50 + 0.8 * 1.25)  # gpt-4o cached input is $1.25
+
+
+@requires_openai
+async def test_openai_stream_cached_prompt_tokens_bill_at_the_cached_rate():
+    stream = FakeOpenAIStream([openai_chunk("hi", finish_reason="stop"), openai_chunk(usage=cached_usage(1_000_000, 1_000_000))])
+    agent, _ = openai_agent([stream], tools=[])
+
+    [c async for c in agent.stream("hello")]
+
+    assert agent.last_result is not None
+    assert agent.last_result.total_cost_usd == pytest.approx(1.25)
+
+
+@requires_openai
+async def test_set_price_cached_input_rate():
+    set_price("gpt-next", 1.0, 8.0, cached_input_usd_per_mtok=0.1)
+    try:
+        response = openai_response("hi")
+        response.usage = cached_usage(1_000_000, 1_000_000)
+        agent, _ = openai_agent([response], tools=[], model="gpt-next")
+        result = await agent.run("hello")
+    finally:
+        clear_prices()
+    assert result.total_cost_usd == pytest.approx(0.1)

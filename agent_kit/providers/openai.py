@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from agent_kit.exceptions import ProviderError, ResponseTruncatedError
 from agent_kit.providers.base import ProviderConfig
-from agent_kit.providers.pricing import lookup_rates
+from agent_kit.providers.pricing import cached_input_rate, lookup_rates
 from agent_kit.types import CostSummary, Message, RequestOptions, ToolCall, ToolSchema, Turn
 
 if TYPE_CHECKING:
@@ -33,15 +33,31 @@ _COST_TABLE: dict[str, tuple[float, float]] = {
     "o1-mini":       (3.00, 12.00),
 }
 
+# Every model in _COST_TABLE that supports prompt caching bills cached prompt tokens at half the input rate
+_CACHED_INPUT_MULTIPLIER = 0.5
+
 _DEFAULT_MODEL = "gpt-4o"
 
 
-def _estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+def _estimate_cost(model: str, input_tokens: int, output_tokens: int, cached_tokens: int = 0) -> float:
+    """USD for one call; ``input_tokens`` excludes the ``cached_tokens`` read from the prompt cache."""
     rates = lookup_rates(_COST_TABLE, model)
     if rates is None:
         return 0.0
     in_rate, out_rate = rates
-    return (input_tokens * in_rate + output_tokens * out_rate) / 1_000_000
+    cached_rate = cached_input_rate(model)
+    if cached_rate is None:
+        cached_rate = in_rate * _CACHED_INPUT_MULTIPLIER
+    return (input_tokens * in_rate + cached_tokens * cached_rate + output_tokens * out_rate) / 1_000_000
+
+
+def _usage(usage: Any) -> tuple[int, int, int]:
+    """(uncached input, cached input, output) tokens. OpenAI's prompt_tokens includes the cached ones."""
+    if usage is None:
+        return 0, 0, 0
+    details = getattr(usage, "prompt_tokens_details", None)
+    cached = int(getattr(details, "cached_tokens", 0) or 0)
+    return int(usage.prompt_tokens or 0) - cached, cached, int(usage.completion_tokens or 0)
 
 
 def _to_openai_tools(schemas: list[ToolSchema]) -> list[dict[str, Any]]:
@@ -156,10 +172,12 @@ class OpenAIProvider:
     def name(self) -> str:
         return "openai"
 
-    def _price(self, model: str, input_tokens: int, output_tokens: int) -> tuple[float, bool]:
+    def _price(
+        self, model: str, input_tokens: int, output_tokens: int, cached_tokens: int = 0
+    ) -> tuple[float, bool]:
         """(cost_usd, priced) for one call."""
         priced = lookup_rates(_COST_TABLE, model) is not None
-        return _estimate_cost(model, input_tokens, output_tokens), priced
+        return _estimate_cost(model, input_tokens, output_tokens, cached_tokens), priced
 
     async def complete(
         self,
@@ -214,14 +232,13 @@ class OpenAIProvider:
                     )
                 )
 
-        usage = response.usage
-        input_tokens = usage.prompt_tokens if usage else 0
-        output_tokens = usage.completion_tokens if usage else 0
-        cost_usd, priced = self._price(resolved_model, input_tokens, output_tokens)
+        input_tokens, cached_tokens, output_tokens = _usage(response.usage)
+        cost_usd, priced = self._price(resolved_model, input_tokens, output_tokens, cached_tokens)
         cost = CostSummary(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            total_tokens=input_tokens + output_tokens,
+            cache_read_tokens=cached_tokens,
+            total_tokens=input_tokens + cached_tokens + output_tokens,
             cost_usd=cost_usd,
             model=resolved_model,
             priced=priced,
@@ -269,7 +286,7 @@ class OpenAIProvider:
 
         text_parts: list[str] = []
         pending: dict[int, dict[str, str]] = {}  # tool-call deltas by index
-        input_tokens = output_tokens = 0
+        input_tokens = cached_tokens = output_tokens = 0
         finish_reason: str | None = None
         t0 = time.monotonic()
         try:
@@ -279,8 +296,7 @@ class OpenAIProvider:
             async with stream:
                 async for chunk in stream:
                     if chunk.usage:
-                        input_tokens = chunk.usage.prompt_tokens
-                        output_tokens = chunk.usage.completion_tokens
+                        input_tokens, cached_tokens, output_tokens = _usage(chunk.usage)
                     if not chunk.choices:
                         continue
                     finish_reason = getattr(chunk.choices[0], "finish_reason", None) or finish_reason
@@ -315,7 +331,7 @@ class OpenAIProvider:
             )
             for _, slot in sorted(pending.items())
         ]
-        cost_usd, priced = self._price(resolved_model, input_tokens, output_tokens)
+        cost_usd, priced = self._price(resolved_model, input_tokens, output_tokens, cached_tokens)
         yield Turn(
             messages_in=messages,
             message_out=Message(role="assistant", content="".join(text_parts), tool_calls=tool_calls),
@@ -323,7 +339,8 @@ class OpenAIProvider:
             cost=CostSummary(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
-                total_tokens=input_tokens + output_tokens,
+                cache_read_tokens=cached_tokens,
+                total_tokens=input_tokens + cached_tokens + output_tokens,
                 cost_usd=cost_usd,
                 model=resolved_model,
                 priced=priced,

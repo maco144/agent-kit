@@ -34,7 +34,12 @@ _PRICES: dict[str, tuple[float, float]] = {
     "o1-mini":           (3.00,  12.00),
 }
 
-_CACHE_READ_MULTIPLIER: dict[str, float] = {"claude-fable-5-1": 0.025}
+# Cache reads bill at 0.1x input except where listed (longest prefix wins). OpenAI: 0.5x.
+_CACHE_READ_MULTIPLIER: dict[str, float] = {
+    "claude-fable-5-1": 0.025,
+    "gpt-": 0.5,
+    "o1": 0.5,
+}
 _CACHE_WRITE_MULTIPLIER = 1.25
 
 
@@ -50,9 +55,8 @@ def estimate_cost(
     if not matches:
         return 0.0
     in_rate, out_rate = _PRICES[max(matches, key=len)]
-    read_multiplier = next(
-        (m for prefix, m in _CACHE_READ_MULTIPLIER.items() if model.startswith(prefix)), 0.1
-    )
+    read_matches = [prefix for prefix in _CACHE_READ_MULTIPLIER if model.startswith(prefix)]
+    read_multiplier = _CACHE_READ_MULTIPLIER[max(read_matches, key=len)] if read_matches else 0.1
     return (
         input_tokens * in_rate
         + output_tokens * out_rate

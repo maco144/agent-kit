@@ -52,7 +52,7 @@ def price_call(
             return anthropic_cost(model, input_tokens, output_tokens, cache_read, cache_write)
         from agent_kit.providers.openai import _estimate_cost as openai_cost
 
-        return openai_cost(model, input_tokens, output_tokens)
+        return openai_cost(model, input_tokens, output_tokens, cache_read)
     except ImportError:
         return 0.0
 

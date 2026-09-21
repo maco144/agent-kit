@@ -102,6 +102,37 @@ def test_response_spans_use_response_usage(cloud_capture):
     assert (turn["input_tokens"], turn["output_tokens"], turn["duration_ms"]) == (40, 8, 1250)
 
 
+def test_response_spans_bill_cached_input_at_the_cached_rate(cloud_capture):
+    proc = AgentKitTraceProcessor(cloud_capture.reporter)
+    trace = NS(trace_id="trace_" + "c" * 32, name="wf", group_id=None)
+    proc.on_trace_start(trace)
+    usage = NS(input_tokens=1_000_000, output_tokens=0, input_tokens_details=NS(cached_tokens=800_000))
+    span = NS(
+        trace_id=trace.trace_id, span_id="span_1", error=None, started_at=None, ended_at=None,
+        span_data=NS(type="response", response=NS(model="gpt-4o", usage=usage), usage=None),
+    )
+    proc.on_span_end(span)
+    proc.on_trace_end(trace)
+
+    turn = cloud_capture.of("turn_complete")[0].payload
+    assert turn["input_tokens"] == 200_000  # uncached, as for native agent-kit turns
+    assert turn["cost_usd"] == pytest.approx(0.2 * 2.50 + 0.8 * 1.25)
+
+
+async def test_run_hooks_bill_cached_input_at_the_cached_rate(cloud_capture):
+    guard = GuardStub(tripped=False)
+    cloud_capture.reporter._budget_guard = guard
+    hooks = AgentKitRunHooks(cloud_capture.reporter)
+    agent = NS(name="support", model="gpt-4o")
+    usage = NS(input_tokens=1_000_000, output_tokens=0, input_tokens_details=NS(cached_tokens=1_000_000))
+
+    await hooks.on_llm_end(NS(), agent, NS(usage=usage))
+    assert guard.spend == [pytest.approx(1.25)]
+
+    capped = AgentKitRunHooks(cloud_capture.reporter, max_run_cost_usd=2.0, enforce_budgets=False)
+    await capped.on_llm_start(NS(usage=usage), agent, None, [])  # $1.25 is under the cap; billed uncached it was $2.50
+
+
 def test_processor_never_raises_on_malformed_spans(cloud_capture):
     proc = AgentKitTraceProcessor(cloud_capture.reporter)
     proc.on_span_end(NS(trace_id="t", span_id="s", error=None, started_at=None, ended_at=None, span_data=None))

@@ -142,3 +142,6 @@ def test_pricing(model, args, usd):
 def test_pricing_cache_multipliers():
     assert estimate_cost("claude-opus-5", 0, 0, 1_000_000, 1_000_000) == pytest.approx(0.5 + 6.25)
     assert estimate_cost("claude-fable-5-1", 0, 0, 1_000_000) == pytest.approx(0.25)
+    # OpenAI bills cached prompt tokens at half the input rate
+    assert estimate_cost("gpt-4o", 0, 0, 1_000_000) == pytest.approx(1.25)
+    assert estimate_cost("o1-mini", 0, 0, 1_000_000) == pytest.approx(1.50)
