@@ -21,11 +21,14 @@ approver, a denied or timed-out approval. Decisions are recorded in the audit ch
 from __future__ import annotations
 
 import inspect
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal
 
 from agent_kit.types import SEVERITY_ORDER, Finding
+
+logger = logging.getLogger("agent_kit.hooks")
 
 DecisionKind = Literal["allow", "deny", "ask", "replace"]
 
@@ -153,33 +156,71 @@ def flagged_payload(call_id: str, tool_name: str, action: str, findings: Sequenc
     }
 
 
+_POLICY_ATTR = "_agentkit_policy"  # (helper name, tool names, matches MCP-prefixed names)
+
+
+def _restrictive_match(names: frozenset[str], tool_name: str) -> bool:
+    """Exact, or an MCP tool ``<server>__<name>`` — widening a restriction never lets a tool through."""
+    return tool_name in names or any(tool_name.endswith(f"__{n}") for n in names)
+
+
 def require_approval(*tool_names: str, reason: str | None = None) -> BeforeToolHook:
-    """Ask the approver before any of these tools run."""
+    """Ask the approver before any of these tools run, local or MCP (``<server>__<name>``)."""
     names = frozenset(tool_names)
 
     def hook(ctx: ToolCallContext) -> HookResult:
-        if ctx.tool_name in names:
+        if _restrictive_match(names, ctx.tool_name):
             return Decision.ask(reason or f"{ctx.tool_name} requires approval")
         return None
 
+    setattr(hook, _POLICY_ATTR, ("require_approval", names, True))
     return hook
 
 
 def deny_tools(*tool_names: str, reason: str, stop_run: bool = False) -> BeforeToolHook:
-    """Never run these tools."""
+    """Never run these tools, local or MCP (``<server>__<name>``)."""
     names = frozenset(tool_names)
 
     def hook(ctx: ToolCallContext) -> HookResult:
-        return Decision.deny(reason, stop_run=stop_run) if ctx.tool_name in names else None
+        return Decision.deny(reason, stop_run=stop_run) if _restrictive_match(names, ctx.tool_name) else None
 
+    setattr(hook, _POLICY_ATTR, ("deny_tools", names, True))
     return hook
 
 
 def allow_only(*tool_names: str, reason: str = "tool not permitted by policy") -> BeforeToolHook:
-    """Deny every tool not listed (the model still sees all tools, unlike allowed_tools)."""
+    """
+    Deny every tool not listed (the model still sees all tools, unlike allowed_tools).
+
+    Names match exactly: list MCP tools by their full ``<server>__<name>``, so an allowlist entry
+    never admits a same-named tool from another server.
+    """
     names = frozenset(tool_names)
 
     def hook(ctx: ToolCallContext) -> HookResult:
         return None if ctx.tool_name in names else Decision.deny(reason)
 
+    setattr(hook, _POLICY_ATTR, ("allow_only", names, False))
     return hook
+
+
+def warn_unknown_policy_names(hooks: Hooks | None, tool_names: Sequence[str]) -> None:
+    """Log each policy helper that names a tool the agent doesn't have — a typo there matches nothing."""
+    if hooks is None:
+        return
+    for hook in hooks.before_tool:
+        policy = getattr(hook, _POLICY_ATTR, None)
+        if policy is None:
+            continue
+        helper, names, prefixed = policy
+        unknown = sorted(
+            n for n in names
+            if not any(t == n or (prefixed and t.endswith(f"__{n}")) for t in tool_names)
+        )
+        if unknown:
+            logger.warning(
+                "%s names tool(s) this agent does not have: %s — it will never match them. "
+                "Check the spelling; MCP tools are named '<server>__<tool>'.",
+                helper,
+                ", ".join(repr(n) for n in unknown),
+            )

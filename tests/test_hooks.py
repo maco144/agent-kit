@@ -383,3 +383,43 @@ async def test_tool_returning_none_is_not_reported_as_an_error():
 
     message = last_tool_message(provider)
     assert (message.content, message.metadata.get("is_error")) == ("null", None)
+
+
+# ---------------------------------------------------------------------------
+# Policy helpers and MCP tool names (`<server>__<tool>`)
+# ---------------------------------------------------------------------------
+
+
+async def test_deny_and_approval_also_match_the_mcp_prefixed_name():
+    assert (await run_hook(deny_tools("exec", reason="no"), tool_ctx("shell__exec"))).kind == "deny"
+    assert (await run_hook(require_approval("exec"), tool_ctx("shell__exec"))).kind == "ask"
+    assert (await run_hook(deny_tools("exec", reason="no"), tool_ctx("shell__exec_readonly"))).kind == "allow"
+
+
+async def test_allow_only_stays_exact():
+    # A suffix match would let any server's "lookup" through an allowlist meant for the local tool
+    assert (await run_hook(allow_only("lookup"), tool_ctx("untrusted__lookup"))).kind == "deny"
+
+
+@tool(description="look up an order")
+async def lookup_order(order_id: str) -> dict[str, Any]:
+    return {"order_id": order_id}
+
+
+async def test_policy_naming_a_tool_the_agent_lacks_warns_once(caplog):
+    hooks = Hooks(before_tool=[deny_tools("refnud", "lookup_order", reason="typo"), allow_only("lookup_order")])
+    agent = Agent(ScriptedProvider(final(), final()), tools=[lookup_order], config=AgentConfig(hooks=hooks))
+    with caplog.at_level("WARNING", logger="agent_kit.hooks"):
+        await agent.run("one")
+        await agent.run("two")
+    assert caplog.text.count("refnud") == 1
+    assert "lookup_order" not in caplog.text
+
+
+async def test_lead_policy_may_name_its_child_agents_tools(caplog):
+    research = Agent(ScriptedProvider(final()), tools=[lookup_order]).as_tool("research", "Investigate.")
+    hooks = Hooks(before_tool=[allow_only("research", "lookup_order")])
+    lead = Agent(ScriptedProvider(final()), tools=[research], config=AgentConfig(hooks=hooks))
+    with caplog.at_level("WARNING", logger="agent_kit.hooks"):
+        await lead.run("go")
+    assert "allow_only" not in caplog.text

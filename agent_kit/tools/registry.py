@@ -37,6 +37,10 @@ class ToolRegistry:
             raise ToolNotAllowedError(name)
         return self._tools[name]
 
+    def all(self) -> list[Tool]:
+        """Every registered tool, allowed or not."""
+        return list(self._tools.values())
+
     def schemas(self) -> list[ToolSchema]:
         """Return schemas for all tools that pass the allowlist filter."""
         tools = list(self._tools.values())

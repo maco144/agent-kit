@@ -6,6 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 ## [Unreleased]
 
 ### Fixed
+- **Policy helpers and MCP tool names.** `deny_tools("exec")` and `require_approval("exec")` silently missed the MCP tool `shell__exec`; they now also match `<server>__<name>`. `allow_only` stays exact, so an allowlist entry never admits a same-named tool from another server. An agent whose `deny_tools` / `require_approval` / `allow_only` names a tool it doesn't have — counting its child agents' tools — logs a warning at its first run, so a typo no longer fails open quietly.
 - **CloudReporter no longer loses events silently.** Dropped events were logged at `DEBUG`. A full queue, a batch the server rejects, and a batch that fails every attempt now log a `WARNING` (a full queue at most once a minute), and `reporter.dropped_events` counts them. Batches rejected with a 4xx other than 408 / 429 are no longer retried, since the same batch would be rejected again. Each flush now ships the whole queue instead of at most 200 events per interval (40 events a second), and the `atexit` flush drains every batch rather than the first.
 
 ## [0.5.0] — 2026-09-21

@@ -9,7 +9,7 @@ from agent_kit.agent.loop import AgentLoop
 from agent_kit.audit.chain import AuditChain
 from agent_kit.durable import CHECKPOINT_SCHEMA_VERSION, RunCheckpoint, RunStore
 from agent_kit.exceptions import AuditVerificationError, CheckpointError, RunNotFoundError
-from agent_kit.hooks import SUSPEND, Suspend
+from agent_kit.hooks import SUSPEND, Suspend, warn_unknown_policy_names
 from agent_kit.memory.in_memory import InMemoryStore
 from agent_kit.observability.tracer import AgentTracer
 from agent_kit.output import OutputSpec
@@ -158,6 +158,7 @@ class Agent:
         self._tracer = self._config.tracer or AgentTracer()
         self._audit: AuditChain | None = AuditChain() if self._config.audit_enabled else None
         self.last_result: AgentResult[Any] | None = None
+        self._policies_checked = False
 
     def add_tool(self, t: Tool) -> "Agent":
         """Register a tool and return self for fluent chaining."""
@@ -211,6 +212,7 @@ class Agent:
             OutputValidationError: if a typed answer never validates
         """
         self._check_run_id(run_id)
+        self._check_policies()
         self.last_result = await self._make_loop().run(prompt, output_type=output_type, run_id=run_id, **context)
         return self.last_result
 
@@ -230,6 +232,7 @@ class Agent:
         a repair); ``agent.last_result.parsed`` holds the validated value.
         """
         self._check_run_id(run_id)
+        self._check_policies()
         loop = self._make_loop()
         async for chunk in loop.stream(prompt, output_type=output_type, run_id=run_id, **context):
             yield chunk
@@ -345,6 +348,24 @@ class Agent:
                     audit = self._restored_audit(checkpoint)
                 memory.add_many(checkpoint.messages)
         return self._make_loop(memory=memory, audit=audit, **overrides), checkpoint
+
+    def _check_policies(self) -> None:
+        """Once per agent, at its first run (tools added after construction count): warn on unknown names."""
+        if not self._policies_checked:
+            self._policies_checked = True
+            warn_unknown_policy_names(self._config.hooks, self._reachable_tool_names())
+
+    def _reachable_tool_names(self, seen: set[int] | None = None) -> list[str]:
+        """This agent's tools and, through agent tools, its children's — parent policies apply to both."""
+        seen = seen if seen is not None else set()
+        seen.add(id(self))
+        names: list[str] = []
+        for t in self._registry.all():
+            names.append(t.schema.name)
+            child = getattr(t, "agent", None)
+            if isinstance(child, Agent) and id(child) not in seen:
+                names.extend(child._reachable_tool_names(seen))
+        return names
 
     def _make_loop(self, **overrides: Any) -> AgentLoop:
         kwargs: dict[str, Any] = dict(

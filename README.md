@@ -690,6 +690,7 @@ async with MCPToolset(
 ```
 
 - MCP tools are ordinary agent-kit tools named `server__tool`: `allowed_tools`, hooks, approvals, budgets, audit, and Cloud reporting all apply.
+- `deny_tools("exec")` and `require_approval("exec")` also match `shell__exec` on any server. `allow_only` matches exactly — list MCP tools by their full `server__tool` name, so an allowlist entry never admits a same-named tool from another server. A helper naming a tool the agent (or its child agents) doesn't have logs a warning at the first run.
 - Structured results come back as data; text, images, and resources are summarised; tool errors and timeouts (`call_timeout_s`) reach the model as tool errors.
 - `require_approval_unless_read_only(mcp)` asks before any MCP tool not marked `readOnlyHint` — a server can't skip the gate by omitting hints.
 - A `required` server that fails to connect closes the others and raises `MCPConnectionError`; `required=False` skips it.
