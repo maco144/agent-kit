@@ -28,3 +28,6 @@ CLAUDE.md
 *.db
 *.db-journal
 *.sqlite3
+
+# Local secrets (API keys dropped next to the server)
+*-key.txt
